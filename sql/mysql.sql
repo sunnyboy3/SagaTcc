@@ -1,0 +1,81 @@
+create table if not exists saga_tcc_transaction (
+  saga_id varchar(64) not null,
+  coordinator_app varchar(128) not null,
+  business_code varchar(128) not null,
+  business_id varchar(128) not null,
+  status varchar(32) not null,
+  branch_count int not null default 0,
+  last_error varchar(2000) null,
+  next_retry_time datetime(3) not null,
+  create_time datetime(3) not null,
+  update_time datetime(3) not null,
+  primary key (saga_id),
+  key idx_saga_tcc_tx_status_retry (status, next_retry_time),
+  key idx_saga_tcc_tx_business (coordinator_app, business_code, business_id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin row_format=dynamic;
+
+create table if not exists saga_tcc_branch (
+  id bigint not null auto_increment,
+  saga_id varchar(64) not null,
+  branch_no int not null,
+  target_app varchar(128) not null,
+  bus_code varchar(128) not null,
+  request_class varchar(512) not null,
+  request_json longtext not null,
+  status varchar(32) not null,
+  try_attempts int not null default 0,
+  confirm_attempts int not null default 0,
+  cancel_attempts int not null default 0,
+  failure_attempt int not null default 0,
+  last_error varchar(2000) null,
+  next_retry_time datetime(3) not null,
+  create_time datetime(3) not null,
+  update_time datetime(3) not null,
+  primary key (id),
+  unique key uk_saga_tcc_branch_no (saga_id, branch_no),
+  key idx_saga_tcc_branch_status_retry (status, next_retry_time, id),
+  key idx_saga_tcc_branch_saga (saga_id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin row_format=dynamic;
+
+create table if not exists saga_tcc_outbox (
+  id bigint not null auto_increment,
+  message_key varchar(160) not null,
+  saga_id varchar(64) not null,
+  branch_id bigint not null,
+  topic varchar(255) not null,
+  tag varchar(64) not null,
+  action varchar(32) not null,
+  command_attempt int not null,
+  payload longtext not null,
+  status varchar(32) not null,
+  attempts int not null default 0,
+  claim_token varchar(64) null,
+  next_retry_time datetime(3) not null,
+  create_time datetime(3) not null,
+  update_time datetime(3) not null,
+  primary key (id),
+  unique key uk_saga_tcc_outbox_msg (message_key),
+  key idx_saga_tcc_outbox_ready (status, next_retry_time, id),
+  key idx_saga_tcc_outbox_claim_token (claim_token),
+  key idx_saga_tcc_outbox_branch_attempt (branch_id, status, action, command_attempt, attempts),
+  key idx_saga_tcc_outbox_saga (saga_id, branch_id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin row_format=dynamic;
+
+create table if not exists saga_tcc_participant_log (
+  id bigint not null auto_increment,
+  local_app varchar(128) not null,
+  coordinator_app varchar(128) not null,
+  saga_id varchar(64) not null,
+  branch_id bigint not null,
+  target_app varchar(128) not null,
+  bus_code varchar(128) not null,
+  request_hash varchar(64) not null,
+  try_status varchar(32) null,
+  confirm_status varchar(32) null,
+  cancel_status varchar(32) null,
+  create_time datetime(3) not null,
+  update_time datetime(3) not null,
+  primary key (id),
+  unique key uk_saga_tcc_participant_branch (local_app, coordinator_app, saga_id, branch_id),
+  key idx_saga_tcc_participant_saga (saga_id, branch_id)
+) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin row_format=dynamic;
