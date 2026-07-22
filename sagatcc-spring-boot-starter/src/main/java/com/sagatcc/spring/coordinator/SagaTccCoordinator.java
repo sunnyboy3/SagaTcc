@@ -234,8 +234,7 @@ public class SagaTccCoordinator {
         if (action == SagaTccAction.TRY) {
             if (repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.TRYING,
                     SagaTccBranchStatus.TRY_FAILED, "max retry attempts reached")) {
-                scheduleCancel(branch.getSagaId(), repository.findBranches(branch.getSagaId()));
-                transaction.setStatus(SagaTccTransactionStatus.CANCELLING);
+                completeTryPhase(branch.getSagaId());
             }
             return;
         }
@@ -260,16 +259,14 @@ public class SagaTccCoordinator {
                     SagaTccBranchStatus.TRY_FAILED, result.getErrorMessage())) {
                 return;
             }
-            scheduleCancel(branch.getSagaId(), repository.findBranches(branch.getSagaId()));
+            completeTryPhase(branch.getSagaId());
             return;
         }
         if (!repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.TRYING,
                 SagaTccBranchStatus.TRY_SUCCEEDED, null)) {
             return;
         }
-        if (repository.allBranchesInStatus(branch.getSagaId(), SagaTccBranchStatus.TRY_SUCCEEDED)) {
-            scheduleConfirm(branch.getSagaId(), repository.findBranches(branch.getSagaId()));
-        }
+        completeTryPhase(branch.getSagaId());
     }
 
     private void handleConfirmResult(SagaTccResultMessage result, SagaTccBranchRecord branch) {
@@ -312,6 +309,33 @@ public class SagaTccCoordinator {
             return;
         }
         completeTerminalPhase(branch.getSagaId(), SagaTccAction.CANCEL);
+    }
+
+    /**
+     * 等待同一 Saga 的所有 Try 分支都返回终态后，再统一决定 Confirm 或 Cancel。
+     * 这样可以避免某个分支失败后，Cancel 抢在其他分支尚未执行的 Try 前面形成空回滚。
+     */
+    private void completeTryPhase(String sagaId) {
+        List<SagaTccBranchRecord> branches = repository.findBranches(sagaId);
+        boolean hasFailure = false;
+        if (branches.isEmpty()) {
+            return;
+        }
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.TRYING) {
+                return;
+            }
+            if (branch.getStatus() == SagaTccBranchStatus.TRY_FAILED) {
+                hasFailure = true;
+            } else if (branch.getStatus() != SagaTccBranchStatus.TRY_SUCCEEDED) {
+                return;
+            }
+        }
+        if (hasFailure) {
+            scheduleCancel(sagaId, branches);
+        } else {
+            scheduleConfirm(sagaId, branches);
+        }
     }
 
     private void scheduleConfirm(String sagaId, List<SagaTccBranchRecord> branches) {

@@ -142,6 +142,36 @@ class SagaTccCoordinatorConcurrencyTest {
     }
 
     @Test
+    void concurrentTryResultsWithOnePermanentFailureScheduleCancelAfterEveryTryCompletes() throws Exception {
+        repository.addTransaction("saga", "order", SagaTccTransactionStatus.TRYING);
+        List<Runnable> workers = new ArrayList<Runnable>();
+        for (long branchId = 1; branchId <= BRANCH_COUNT; branchId++) {
+            repository.addBranch(branchId, "saga", SagaTccBranchStatus.TRYING);
+            repository.setDispatchedAttempts(branchId, 1, 0, 0);
+            final long id = branchId;
+            workers.add(() -> {
+                SagaTccResultMessage tryResult = result(id, SagaTccAction.TRY, id != 1L);
+                if (id == 1L) {
+                    tryResult.setRetryable(false);
+                    tryResult.setErrorMessage("rejected");
+                }
+                coordinatorFor(id).handleResult(tryResult);
+            });
+        }
+
+        runAtTheSameTime(workers);
+
+        assertEquals(SagaTccTransactionStatus.CANCELLING, repository.transactionStatus("saga"));
+        assertEquals(1, repository.successfulTransitionsTo(SagaTccTransactionStatus.CANCELLING));
+        assertEquals(BRANCH_COUNT, repository.transactionForUpdateLookups());
+        for (long branchId = 1; branchId <= BRANCH_COUNT; branchId++) {
+            assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(branchId));
+        }
+        assertAllCommands(SagaTccAction.CANCEL, BRANCH_COUNT);
+        assertEveryBranchHasExactlyOneCommand();
+    }
+
+    @Test
     void concurrentLastConfirmResultsCommitTheSagaExactlyOnce() throws Exception {
         repository.addTransaction("saga", "order", SagaTccTransactionStatus.COMMITTING);
         List<Runnable> workers = new ArrayList<Runnable>();

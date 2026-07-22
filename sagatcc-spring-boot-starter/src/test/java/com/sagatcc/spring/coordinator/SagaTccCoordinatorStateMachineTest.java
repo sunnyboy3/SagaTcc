@@ -104,6 +104,33 @@ class SagaTccCoordinatorStateMachineTest {
     }
 
     @Test
+    void failedTryWaitsForEveryOtherTryBeforeSchedulingCancel() throws Exception {
+        repository.addTransaction("saga", "order", SagaTccTransactionStatus.TRYING);
+        repository.addBranch(1L, "saga", SagaTccBranchStatus.TRYING);
+        repository.addBranch(2L, "saga", SagaTccBranchStatus.TRYING);
+        repository.setDispatchedAttempts(1L, 1, 0, 0);
+        repository.setDispatchedAttempts(2L, 1, 0, 0);
+
+        coordinator.handleResult(result(1L, SagaTccAction.TRY, false, false));
+
+        assertEquals(SagaTccBranchStatus.TRY_FAILED, repository.branchStatus(1L));
+        assertEquals(SagaTccBranchStatus.TRYING, repository.branchStatus(2L));
+        assertEquals(SagaTccTransactionStatus.TRYING, repository.transactionStatus("saga"));
+        assertEquals(0, repository.enqueuedCount());
+
+        coordinator.handleResult(result(2L, SagaTccAction.TRY, true, false));
+
+        assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(1L));
+        assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(2L));
+        assertEquals(SagaTccTransactionStatus.CANCELLING, repository.transactionStatus("saga"));
+        assertEquals(2, repository.enqueuedCount());
+        for (SagaTccOutboxRecord outbox : repository.enqueuedOutbox()) {
+            assertEquals(SagaTccAction.CANCEL,
+                    objectMapper.readValue(outbox.getPayload(), SagaTccCommandMessage.class).getAction());
+        }
+    }
+
+    @Test
     void duplicateRetryableTryFailureSchedulesOneRetryWithoutPrematureCompensation() {
         repository.addTransaction("saga", "order", SagaTccTransactionStatus.TRYING);
         repository.addBranch(1L, "saga", SagaTccBranchStatus.TRYING);
@@ -256,7 +283,7 @@ class SagaTccCoordinatorStateMachineTest {
     }
 
     @Test
-    void recoveryAtTheAttemptLimitStartsCompensationForEveryPotentialReservation() throws Exception {
+    void recoveryAtTheAttemptLimitWaitsForRemainingTryBeforeCompensation() throws Exception {
         properties.setMaxAttempts(3);
         repository.addTransaction("saga", "order", SagaTccTransactionStatus.TRYING);
         repository.addBranch(1L, "saga", SagaTccBranchStatus.TRYING);
@@ -267,15 +294,34 @@ class SagaTccCoordinatorStateMachineTest {
 
         coordinator.recoverTimeoutBranches();
 
+        assertEquals(SagaTccTransactionStatus.TRYING, repository.transactionStatus("saga"));
+        assertEquals(SagaTccBranchStatus.TRY_FAILED, repository.branchStatus(1L));
+        assertEquals(SagaTccBranchStatus.TRYING, repository.branchStatus(2L));
+        assertEquals(SagaTccBranchStatus.TRY_SUCCEEDED, repository.branchStatus(3L));
+        assertEquals(2, repository.attempts(2L, SagaTccBranchStatus.TRYING));
+        assertEquals(1, repository.enqueuedCount());
+        assertEquals(SagaTccAction.TRY,
+                objectMapper.readValue(repository.enqueuedOutbox().get(0).getPayload(),
+                        SagaTccCommandMessage.class).getAction());
+
+        SagaTccResultMessage remainingSuccess = result(2L, SagaTccAction.TRY, true, false);
+        remainingSuccess.setAttempt(2);
+        coordinator.handleResult(remainingSuccess);
+
         assertEquals(SagaTccTransactionStatus.CANCELLING, repository.transactionStatus("saga"));
         assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(1L));
         assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(2L));
         assertEquals(SagaTccBranchStatus.CANCELLING, repository.branchStatus(3L));
-        assertEquals(3, repository.enqueuedCount());
+        assertEquals(4, repository.enqueuedCount());
+        int cancelCommands = 0;
         for (SagaTccOutboxRecord outbox : repository.enqueuedOutbox()) {
-            assertEquals(SagaTccAction.CANCEL,
-                    objectMapper.readValue(outbox.getPayload(), SagaTccCommandMessage.class).getAction());
+            SagaTccAction action = objectMapper.readValue(outbox.getPayload(),
+                    SagaTccCommandMessage.class).getAction();
+            if (action == SagaTccAction.CANCEL) {
+                cancelCommands++;
+            }
         }
+        assertEquals(3, cancelCommands);
     }
 
     @Test
