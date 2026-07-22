@@ -12,6 +12,7 @@ import com.sagatcc.core.api.SagaTccFailureClassifier;
 import com.sagatcc.core.api.SagaTccOperations;
 import com.sagatcc.core.api.SagaTccParticipant;
 import com.sagatcc.core.api.SagaTccNonRetryableException;
+import com.sagatcc.spring.annotation.EnableSagaTcc;
 import com.sagatcc.spring.coordinator.DefaultSagaTccOperations;
 import com.sagatcc.spring.coordinator.SagaTccCoordinator;
 import com.sagatcc.spring.idempotent.JdbcParticipantLogRepository;
@@ -33,6 +34,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -47,6 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration
 @AutoConfigureAfter(JacksonAutoConfiguration.class)
+@ConditionalOnBean(EnableSagaTcc.Marker.class)
 @EnableScheduling
 @EnableConfigurationProperties(SagaTccProperties.class)
 public class SagaTccAutoConfiguration {

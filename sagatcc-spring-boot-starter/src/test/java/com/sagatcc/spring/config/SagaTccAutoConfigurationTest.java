@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sagatcc.core.api.SagaTccOperations;
 import com.sagatcc.core.message.SagaTccCommandMessage;
+import com.sagatcc.spring.annotation.EnableSagaTcc;
 import com.sagatcc.spring.coordinator.DefaultSagaTccOperations;
 import com.sagatcc.spring.coordinator.SagaTccCoordinator;
 import com.sagatcc.spring.idempotent.ParticipantLogRepository;
@@ -32,6 +33,7 @@ import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.aop.support.AopUtils;
@@ -42,6 +44,19 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 class SagaTccAutoConfigurationTest {
+
+    @Test
+    void starterDoesNotEnableSagaTccWithoutEnableAnnotation() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(SagaTccAutoConfiguration.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(SagaTccProperties.class);
+                    assertThat(context).doesNotHaveBean(SagaTccOperations.class);
+                    assertThat(context).doesNotHaveBean(SagaTccCoordinator.class);
+                    assertThat(context).doesNotHaveBean(SagaTccParticipantDispatcher.class);
+                });
+    }
 
     @Test
     void transactionManagerAliasUsesTheSameSingletonWithoutAddingASecondCandidate() {
@@ -166,6 +181,7 @@ class SagaTccAutoConfigurationTest {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(
                         TransactionAutoConfiguration.class, SagaTccAutoConfiguration.class))
+                .withUserConfiguration(EnabledSagaTccConfiguration.class)
                 .withPropertyValues("sagatcc.application-name=order", "sagatcc.scheduler-enabled=false")
                 .withBean("transactionManager", PlatformTransactionManager.class,
                         () -> mock(PlatformTransactionManager.class))
@@ -194,6 +210,7 @@ class SagaTccAutoConfigurationTest {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(
                         TransactionAutoConfiguration.class, SagaTccAutoConfiguration.class))
+                .withUserConfiguration(EnabledSagaTccConfiguration.class)
                 .withPropertyValues("sagatcc.application-name=order", "sagatcc.scheduler-enabled=false")
                 .withBean("applicationObjectMapper", ObjectMapper.class, () -> applicationMapper)
                 .withBean("transactionManager", PlatformTransactionManager.class,
@@ -224,5 +241,10 @@ class SagaTccAutoConfigurationTest {
                             context.getBean(RocketMqResultListener.class), "objectMapper"))
                             .isSameAs(protocolMapper);
                 });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableSagaTcc
+    static class EnabledSagaTccConfiguration {
     }
 }
