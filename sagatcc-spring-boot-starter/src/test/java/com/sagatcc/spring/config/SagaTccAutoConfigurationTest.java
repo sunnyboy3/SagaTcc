@@ -202,6 +202,31 @@ class SagaTccAutoConfigurationTest {
     }
 
     @Test
+    void branchExecutionModeCanBeBoundFromConfiguration() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        TransactionAutoConfiguration.class, SagaTccAutoConfiguration.class))
+                .withUserConfiguration(EnabledSagaTccConfiguration.class)
+                .withPropertyValues("sagatcc.application-name=order",
+                        "sagatcc.scheduler-enabled=false",
+                        "sagatcc.branch-execution-mode=parallel",
+                        "sagatcc.branch-execution-modes.createOrder=sequential")
+                .withBean("transactionManager", PlatformTransactionManager.class,
+                        () -> mock(PlatformTransactionManager.class))
+                .withBean(SagaTccRepository.class, () -> mock(SagaTccRepository.class))
+                .withBean(ParticipantLogRepository.class, () -> mock(ParticipantLogRepository.class))
+                .withBean(SagaMessagePublisher.class, () -> mock(SagaMessagePublisher.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    SagaTccProperties properties = context.getBean(SagaTccProperties.class);
+                    assertThat(properties.resolveBranchExecutionMode("createOrder"))
+                            .isEqualTo(SagaTccBranchExecutionMode.SEQUENTIAL);
+                    assertThat(properties.resolveBranchExecutionMode("refundOrder"))
+                            .isEqualTo(SagaTccBranchExecutionMode.PARALLEL);
+                });
+    }
+
+    @Test
     void dedicatedProtocolMapperIsIsolatedFromApplicationJacksonSettings() {
         ObjectMapper applicationMapper = new ObjectMapper()
                 .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)

@@ -22,6 +22,9 @@ class SagaTccPropertiesTest {
                 () -> assertDoesNotThrow(properties::afterPropertiesSet),
                 () -> assertEquals("transactionManager", properties.getTransactionManagerBeanName()),
                 () -> assertEquals(null, properties.getSchema()),
+                () -> assertEquals(SagaTccBranchExecutionMode.PARALLEL,
+                        properties.getBranchExecutionMode()),
+                () -> assertTrue(properties.getBranchExecutionModes().isEmpty()),
                 () -> assertEquals(16, properties.getMaxAttempts()),
                 () -> assertEquals(1000L, properties.getRetryBaseDelayMillis()),
                 () -> assertEquals(60000L, properties.getRetryMaxDelayMillis()),
@@ -37,6 +40,47 @@ class SagaTccPropertiesTest {
                 () -> assertTrue(properties.isSchedulerEnabled()),
                 () -> assertFalse(properties.getRocketmq().isPerApplicationTopic()),
                 () -> assertEquals(3000L, properties.getRocketmq().getSendTimeoutMillis()));
+    }
+
+    @Test
+    void branchExecutionModeMustBeConfiguredWhenExplicitlyOverridden() {
+        SagaTccProperties properties = new SagaTccProperties();
+        properties.setBranchExecutionMode(null);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class, properties::afterPropertiesSet);
+
+        assertTrue(error.getMessage().contains("branch-execution-mode"));
+    }
+
+    @Test
+    void businessCodeCanOverrideDefaultBranchExecutionMode() {
+        SagaTccProperties properties = new SagaTccProperties();
+        properties.getBranchExecutionModes().put("createOrder", SagaTccBranchExecutionMode.SEQUENTIAL);
+
+        assertAll(
+                () -> assertEquals(SagaTccBranchExecutionMode.SEQUENTIAL,
+                        properties.resolveBranchExecutionMode("createOrder")),
+                () -> assertEquals(SagaTccBranchExecutionMode.PARALLEL,
+                        properties.resolveBranchExecutionMode("refundOrder")),
+                () -> assertEquals(SagaTccBranchExecutionMode.PARALLEL,
+                        properties.resolveBranchExecutionMode(null)));
+    }
+
+    @Test
+    void businessCodeExecutionModeOverrideMustBeValid() {
+        SagaTccProperties blankBusinessCode = new SagaTccProperties();
+        blankBusinessCode.getBranchExecutionModes().put(" ", SagaTccBranchExecutionMode.SEQUENTIAL);
+        SagaTccProperties missingMode = new SagaTccProperties();
+        missingMode.getBranchExecutionModes().put("createOrder", null);
+
+        assertAll(
+                () -> assertTrue(assertThrows(IllegalArgumentException.class,
+                        blankBusinessCode::afterPropertiesSet).getMessage()
+                        .contains("business code must not be blank")),
+                () -> assertTrue(assertThrows(IllegalArgumentException.class,
+                        missingMode::afterPropertiesSet).getMessage()
+                        .contains("branch-execution-modes[createOrder]")));
     }
 
     @Test

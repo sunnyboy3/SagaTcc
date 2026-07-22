@@ -48,6 +48,10 @@ public interface SagaTccRepository {
         return findBranch(branchId);
     }
 
+    /**
+     * 按 {@code branchNo} 升序返回 Saga 的全部分支。
+     * 顺序调度依赖该稳定顺序，Cancel 阶段会在协调器中逆序遍历结果。
+     */
     List<SagaTccBranchRecord> findBranches(String sagaId);
 
     boolean allBranchesInStatus(String sagaId, SagaTccBranchStatus status);

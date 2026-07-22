@@ -1,5 +1,8 @@
 package com.sagatcc.spring.config;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.beans.factory.InitializingBean;
 
@@ -13,6 +16,9 @@ public class SagaTccProperties implements InitializingBean {
     private String applicationName;
     private String transactionManagerBeanName = "transactionManager";
     private String schema;
+    private SagaTccBranchExecutionMode branchExecutionMode = SagaTccBranchExecutionMode.PARALLEL;
+    private final Map<String, SagaTccBranchExecutionMode> branchExecutionModes =
+            new LinkedHashMap<String, SagaTccBranchExecutionMode>();
     private int maxAttempts = 16;
     private long retryBaseDelayMillis = 1000L;
     private long retryMaxDelayMillis = 60000L;
@@ -54,6 +60,27 @@ public class SagaTccProperties implements InitializingBean {
 
     public void setSchema(String schema) {
         this.schema = schema;
+    }
+
+    public SagaTccBranchExecutionMode getBranchExecutionMode() {
+        return branchExecutionMode;
+    }
+
+    public void setBranchExecutionMode(SagaTccBranchExecutionMode branchExecutionMode) {
+        this.branchExecutionMode = branchExecutionMode;
+    }
+
+    /**
+     * 按事务业务编码覆盖默认分支调度模式。
+     */
+    public Map<String, SagaTccBranchExecutionMode> getBranchExecutionModes() {
+        return branchExecutionModes;
+    }
+
+    public SagaTccBranchExecutionMode resolveBranchExecutionMode(String businessCode) {
+        SagaTccBranchExecutionMode configured = businessCode == null
+                ? null : branchExecutionModes.get(businessCode);
+        return configured == null ? branchExecutionMode : configured;
     }
 
     public void setMaxAttempts(int maxAttempts) {
@@ -164,6 +191,18 @@ public class SagaTccProperties implements InitializingBean {
     public void afterPropertiesSet() {
         schema = SagaTccTableNames.normalizeSchema(schema);
         requireText(transactionManagerBeanName, "transaction-manager-bean-name");
+        if (branchExecutionMode == null) {
+            throw new IllegalArgumentException("sagatcc.branch-execution-mode must not be null");
+        }
+        for (Map.Entry<String, SagaTccBranchExecutionMode> entry : branchExecutionModes.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().trim().length() == 0) {
+                throw new IllegalArgumentException("sagatcc.branch-execution-modes business code must not be blank");
+            }
+            if (entry.getValue() == null) {
+                throw new IllegalArgumentException("sagatcc.branch-execution-modes["
+                        + entry.getKey() + "] must not be null");
+            }
+        }
         requirePositive(maxAttempts, "max-attempts");
         requirePositive(retryBaseDelayMillis, "retry-base-delay-millis");
         requirePositive(retryMaxDelayMillis, "retry-max-delay-millis");

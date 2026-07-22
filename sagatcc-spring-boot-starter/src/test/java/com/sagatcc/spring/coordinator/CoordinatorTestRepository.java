@@ -45,9 +45,15 @@ final class CoordinatorTestRepository implements SagaTccRepository {
     private volatile CountDownLatch retryScanBarrier;
 
     void addTransaction(String sagaId, String coordinatorApp, SagaTccTransactionStatus status) {
+        addTransaction(sagaId, coordinatorApp, null, status);
+    }
+
+    void addTransaction(String sagaId, String coordinatorApp, String businessCode,
+                        SagaTccTransactionStatus status) {
         SagaTccTransactionRecord transaction = new SagaTccTransactionRecord();
         transaction.setSagaId(sagaId);
         transaction.setCoordinatorApp(coordinatorApp);
+        transaction.setBusinessCode(businessCode);
         transaction.setStatus(status);
         transactions.put(sagaId, transaction);
     }
@@ -56,6 +62,7 @@ final class CoordinatorTestRepository implements SagaTccRepository {
         SagaTccBranchRecord branch = new SagaTccBranchRecord();
         branch.setId(id);
         branch.setSagaId(sagaId);
+        branch.setBranchNo((int) id);
         branch.setTargetApp("wallet");
         branch.setBusCode("reserve");
         branch.setRequestClass("example.ReserveRequest");
@@ -194,7 +201,8 @@ final class CoordinatorTestRepository implements SagaTccRepository {
         Collections.sort(result, new Comparator<SagaTccBranchRecord>() {
             @Override
             public int compare(SagaTccBranchRecord left, SagaTccBranchRecord right) {
-                return left.getId().compareTo(right.getId());
+                int branchOrder = Integer.compare(left.getBranchNo(), right.getBranchNo());
+                return branchOrder != 0 ? branchOrder : left.getId().compareTo(right.getId());
             }
         });
         return result;

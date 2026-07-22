@@ -19,6 +19,7 @@ import com.sagatcc.core.model.SagaTccBranchStatus;
 import com.sagatcc.core.model.SagaTccOutboxRecord;
 import com.sagatcc.core.model.SagaTccTransactionRecord;
 import com.sagatcc.core.model.SagaTccTransactionStatus;
+import com.sagatcc.spring.config.SagaTccBranchExecutionMode;
 import com.sagatcc.spring.config.SagaTccNameResolver;
 import com.sagatcc.spring.config.SagaTccProperties;
 import com.sagatcc.spring.messaging.SagaMessagePublisher;
@@ -123,11 +124,16 @@ public class SagaTccCoordinator {
             if (totalPayloadBytes > properties.getMaxSagaPayloadBytes()) {
                 throw new SagaTccException("serialized SagaTcc requests exceed max-saga-payload-bytes");
             }
-            long branchId = repository.insertBranch(context.getSagaId(), branchNo++, enlistment.getTargetApplication(),
+            int currentBranchNo = branchNo++;
+            long branchId = repository.insertBranch(context.getSagaId(), currentBranchNo,
+                    enlistment.getTargetApplication(),
                     enlistment.getBusinessCode(), request.getClass().getName(), requestJson);
-            enqueueCommand(context.getSagaId(), branchId, context.getCoordinatorApp(), enlistment.getTargetApplication(),
-                    enlistment.getBusinessCode(), SagaTccAction.TRY, request.getClass().getName(), requestJson, 1);
-            repository.markActionDispatched(branchId, SagaTccBranchStatus.TRYING, 1);
+            if (!isSequentialBranchExecution(context.getBusinessCode()) || currentBranchNo == 1) {
+                enqueueCommand(context.getSagaId(), branchId, context.getCoordinatorApp(),
+                        enlistment.getTargetApplication(), enlistment.getBusinessCode(), SagaTccAction.TRY,
+                        request.getClass().getName(), requestJson, 1);
+                repository.markActionDispatched(branchId, SagaTccBranchStatus.TRYING, 1);
+            }
         }
         repository.updateTransactionStatus(context.getSagaId(), SagaTccTransactionStatus.TRYING);
     }
@@ -150,11 +156,11 @@ public class SagaTccCoordinator {
             return;
         }
         if (result.getAction() == SagaTccAction.TRY) {
-            handleTryResult(result, branch);
+            handleTryResult(result, branch, transaction);
         } else if (result.getAction() == SagaTccAction.CONFIRM) {
-            handleConfirmResult(result, branch);
+            handleConfirmResult(result, branch, transaction);
         } else if (result.getAction() == SagaTccAction.CANCEL) {
-            handleCancelResult(result, branch);
+            handleCancelResult(result, branch, transaction);
         }
     }
 
@@ -234,19 +240,20 @@ public class SagaTccCoordinator {
         if (action == SagaTccAction.TRY) {
             if (repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.TRYING,
                     SagaTccBranchStatus.TRY_FAILED, "max retry attempts reached")) {
-                completeTryPhase(branch.getSagaId());
+                completeTryPhase(branch.getSagaId(), transaction);
             }
             return;
         }
         if (repository.transitionBranchStatus(branch.getId(), branch.getStatus(), SagaTccBranchStatus.FAILED,
                 "max retry attempts reached")) {
-            if (completeTerminalPhase(branch.getSagaId(), action)) {
+            if (completeTerminalPhase(branch.getSagaId(), action, transaction)) {
                 transaction.setStatus(SagaTccTransactionStatus.FAILED);
             }
         }
     }
 
-    private void handleTryResult(SagaTccResultMessage result, SagaTccBranchRecord branch) {
+    private void handleTryResult(SagaTccResultMessage result, SagaTccBranchRecord branch,
+                                 SagaTccTransactionRecord transaction) {
         if (!result.isSuccess()) {
             if (result.isRetryable()) {
                 if (repository.recordBranchFailure(branch.getId(), SagaTccBranchStatus.TRYING,
@@ -259,17 +266,18 @@ public class SagaTccCoordinator {
                     SagaTccBranchStatus.TRY_FAILED, result.getErrorMessage())) {
                 return;
             }
-            completeTryPhase(branch.getSagaId());
+            completeTryPhase(branch.getSagaId(), transaction);
             return;
         }
         if (!repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.TRYING,
                 SagaTccBranchStatus.TRY_SUCCEEDED, null)) {
             return;
         }
-        completeTryPhase(branch.getSagaId());
+        completeTryPhase(branch.getSagaId(), transaction);
     }
 
-    private void handleConfirmResult(SagaTccResultMessage result, SagaTccBranchRecord branch) {
+    private void handleConfirmResult(SagaTccResultMessage result, SagaTccBranchRecord branch,
+                                     SagaTccTransactionRecord transaction) {
         if (result.isSuccess()) {
             if (!repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.CONFIRMING,
                     SagaTccBranchStatus.CONFIRMED, null)) {
@@ -277,7 +285,8 @@ public class SagaTccCoordinator {
             }
         } else {
             if (!result.isRetryable()) {
-                failPermanently(branch, SagaTccBranchStatus.CONFIRMING, result.getErrorMessage());
+                failPermanently(branch, SagaTccBranchStatus.CONFIRMING,
+                        result.getErrorMessage(), transaction);
                 return;
             }
             if (!repository.recordBranchFailure(branch.getId(), SagaTccBranchStatus.CONFIRMING,
@@ -287,10 +296,11 @@ public class SagaTccCoordinator {
             repository.scheduleBranchRetry(branch.getId(), branch.getConfirmAttempts() + 1);
             return;
         }
-        completeTerminalPhase(branch.getSagaId(), SagaTccAction.CONFIRM);
+        completeTerminalPhase(branch.getSagaId(), SagaTccAction.CONFIRM, transaction);
     }
 
-    private void handleCancelResult(SagaTccResultMessage result, SagaTccBranchRecord branch) {
+    private void handleCancelResult(SagaTccResultMessage result, SagaTccBranchRecord branch,
+                                    SagaTccTransactionRecord transaction) {
         if (result.isSuccess()) {
             if (!repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.CANCELLING,
                     SagaTccBranchStatus.CANCELLED, null)) {
@@ -298,7 +308,8 @@ public class SagaTccCoordinator {
             }
         } else {
             if (!result.isRetryable()) {
-                failPermanently(branch, SagaTccBranchStatus.CANCELLING, result.getErrorMessage());
+                failPermanently(branch, SagaTccBranchStatus.CANCELLING,
+                        result.getErrorMessage(), transaction);
                 return;
             }
             if (!repository.recordBranchFailure(branch.getId(), SagaTccBranchStatus.CANCELLING,
@@ -308,19 +319,22 @@ public class SagaTccCoordinator {
             repository.scheduleBranchRetry(branch.getId(), branch.getCancelAttempts() + 1);
             return;
         }
-        completeTerminalPhase(branch.getSagaId(), SagaTccAction.CANCEL);
+        completeTerminalPhase(branch.getSagaId(), SagaTccAction.CANCEL, transaction);
     }
 
     /**
-     * 等待同一 Saga 的所有 Try 分支都返回终态后，再统一决定 Confirm 或 Cancel。
-     * 这样可以避免某个分支失败后，Cancel 抢在其他分支尚未执行的 Try 前面形成空回滚。
+     * 并行模式等待所有 Try 返回；顺序模式只在当前分支成功后调度下一个分支。
      */
-    private void completeTryPhase(String sagaId) {
+    private void completeTryPhase(String sagaId, SagaTccTransactionRecord tx) {
         List<SagaTccBranchRecord> branches = repository.findBranches(sagaId);
-        boolean hasFailure = false;
         if (branches.isEmpty()) {
             return;
         }
+        if (isSequentialBranchExecution(tx.getBusinessCode())) {
+            completeSequentialTryPhase(tx, branches);
+            return;
+        }
+        boolean hasFailure = false;
         for (SagaTccBranchRecord branch : branches) {
             if (branch.getStatus() == SagaTccBranchStatus.TRYING) {
                 return;
@@ -338,6 +352,44 @@ public class SagaTccCoordinator {
         }
     }
 
+    private void completeSequentialTryPhase(SagaTccTransactionRecord tx,
+                                            List<SagaTccBranchRecord> branches) {
+        String sagaId = tx.getSagaId();
+        boolean hasFailure = false;
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.TRYING) {
+                return;
+            }
+            if (branch.getStatus() == SagaTccBranchStatus.TRY_FAILED) {
+                hasFailure = true;
+            } else if (branch.getStatus() != SagaTccBranchStatus.NEW
+                    && branch.getStatus() != SagaTccBranchStatus.TRY_SUCCEEDED) {
+                return;
+            }
+        }
+        if (hasFailure) {
+            // 尚未执行 Try 的后续分支没有资源需要补偿，直接标记为已取消。
+            for (SagaTccBranchRecord branch : branches) {
+                if (branch.getStatus() == SagaTccBranchStatus.NEW) {
+                    repository.transitionBranchStatus(branch.getId(), SagaTccBranchStatus.NEW,
+                            SagaTccBranchStatus.CANCELLED, "前置 Try 分支失败，当前分支未执行");
+                }
+            }
+            scheduleCancel(sagaId, repository.findBranches(sagaId));
+            return;
+        }
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.NEW) {
+                if (tx.getStatus() == SagaTccTransactionStatus.TRYING) {
+                    dispatchBranch(tx, branch, SagaTccAction.TRY,
+                            SagaTccBranchStatus.TRYING, branch.getTryAttempts() + 1);
+                }
+                return;
+            }
+        }
+        scheduleConfirm(sagaId, branches);
+    }
+
     private void scheduleConfirm(String sagaId, List<SagaTccBranchRecord> branches) {
         if (!repository.transitionTransactionStatus(sagaId, SagaTccTransactionStatus.COMMITTING,
                 SagaTccTransactionStatus.TRYING)) {
@@ -347,12 +399,14 @@ public class SagaTccCoordinator {
         if (tx == null) {
             return;
         }
+        if (isSequentialBranchExecution(tx.getBusinessCode())) {
+            dispatchNextSequentialConfirm(tx, branches);
+            return;
+        }
         for (SagaTccBranchRecord branch : branches) {
             if (branch.getStatus() == SagaTccBranchStatus.TRY_SUCCEEDED) {
-                int attempt = branch.getConfirmAttempts() + 1;
-                enqueueCommand(sagaId, branch.getId(), tx.getCoordinatorApp(), branch.getTargetApp(), branch.getBusCode(),
-                        SagaTccAction.CONFIRM, branch.getRequestClass(), branch.getRequestJson(), attempt);
-                repository.markActionDispatched(branch.getId(), SagaTccBranchStatus.CONFIRMING, attempt);
+                dispatchBranch(tx, branch, SagaTccAction.CONFIRM,
+                        SagaTccBranchStatus.CONFIRMING, branch.getConfirmAttempts() + 1);
             }
         }
     }
@@ -366,15 +420,63 @@ public class SagaTccCoordinator {
         if (tx == null) {
             return;
         }
+        if (isSequentialBranchExecution(tx.getBusinessCode())) {
+            dispatchNextSequentialCancel(tx, branches);
+            return;
+        }
         for (SagaTccBranchRecord branch : branches) {
-            if (branch.getStatus() != SagaTccBranchStatus.CANCELLED
-                    && branch.getStatus() != SagaTccBranchStatus.CONFIRMED) {
-                int attempt = branch.getCancelAttempts() + 1;
-                enqueueCommand(sagaId, branch.getId(), tx.getCoordinatorApp(), branch.getTargetApp(), branch.getBusCode(),
-                        SagaTccAction.CANCEL, branch.getRequestClass(), branch.getRequestJson(), attempt);
-                repository.markActionDispatched(branch.getId(), SagaTccBranchStatus.CANCELLING, attempt);
+            if (branch.getStatus() == SagaTccBranchStatus.TRY_SUCCEEDED
+                    || branch.getStatus() == SagaTccBranchStatus.TRY_FAILED) {
+                dispatchBranch(tx, branch, SagaTccAction.CANCEL,
+                        SagaTccBranchStatus.CANCELLING, branch.getCancelAttempts() + 1);
             }
         }
+    }
+
+    private void dispatchNextSequentialConfirm(SagaTccTransactionRecord tx,
+                                               List<SagaTccBranchRecord> branches) {
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.CONFIRMING) {
+                return;
+            }
+            if (branch.getStatus() == SagaTccBranchStatus.TRY_SUCCEEDED) {
+                dispatchBranch(tx, branch, SagaTccAction.CONFIRM,
+                        SagaTccBranchStatus.CONFIRMING, branch.getConfirmAttempts() + 1);
+                return;
+            }
+            if (branch.getStatus() != SagaTccBranchStatus.CONFIRMED) {
+                return;
+            }
+        }
+    }
+
+    private void dispatchNextSequentialCancel(SagaTccTransactionRecord tx,
+                                              List<SagaTccBranchRecord> branches) {
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.CANCELLING) {
+                return;
+            }
+        }
+        for (int i = branches.size() - 1; i >= 0; i--) {
+            SagaTccBranchRecord branch = branches.get(i);
+            if (branch.getStatus() == SagaTccBranchStatus.TRY_SUCCEEDED
+                    || branch.getStatus() == SagaTccBranchStatus.TRY_FAILED) {
+                dispatchBranch(tx, branch, SagaTccAction.CANCEL,
+                        SagaTccBranchStatus.CANCELLING, branch.getCancelAttempts() + 1);
+                return;
+            }
+            if (branch.getStatus() != SagaTccBranchStatus.CANCELLED) {
+                return;
+            }
+        }
+    }
+
+    private void dispatchBranch(SagaTccTransactionRecord tx, SagaTccBranchRecord branch,
+                                SagaTccAction action, SagaTccBranchStatus status, int attempt) {
+        enqueueCommand(branch.getSagaId(), branch.getId(), tx.getCoordinatorApp(),
+                branch.getTargetApp(), branch.getBusCode(), action,
+                branch.getRequestClass(), branch.getRequestJson(), attempt);
+        repository.markActionDispatched(branch.getId(), status, attempt);
     }
 
     private void enqueueCommand(String sagaId, long branchId, String coordinatorApp, String targetApp, String busCode,
@@ -416,15 +518,20 @@ public class SagaTccCoordinator {
         return left == null ? right == null : left.equals(right);
     }
 
-    private void failPermanently(SagaTccBranchRecord branch, SagaTccBranchStatus expectedStatus, String error) {
+    private void failPermanently(SagaTccBranchRecord branch, SagaTccBranchStatus expectedStatus,
+                                 String error, SagaTccTransactionRecord transaction) {
         if (repository.transitionBranchStatus(branch.getId(), expectedStatus, SagaTccBranchStatus.FAILED, error)) {
             completeTerminalPhase(branch.getSagaId(),
                     expectedStatus == SagaTccBranchStatus.CONFIRMING
-                            ? SagaTccAction.CONFIRM : SagaTccAction.CANCEL);
+                            ? SagaTccAction.CONFIRM : SagaTccAction.CANCEL, transaction);
         }
     }
 
-    private boolean completeTerminalPhase(String sagaId, SagaTccAction action) {
+    private boolean completeTerminalPhase(String sagaId, SagaTccAction action,
+                                          SagaTccTransactionRecord tx) {
+        if (isSequentialBranchExecution(tx.getBusinessCode())) {
+            return completeSequentialTerminalPhase(tx, action);
+        }
         if (action == SagaTccAction.CONFIRM) {
             return repository.completeTransactionPhase(sagaId, SagaTccTransactionStatus.COMMITTING,
                     SagaTccTransactionStatus.COMMITTED, SagaTccBranchStatus.CONFIRMED);
@@ -434,6 +541,58 @@ public class SagaTccCoordinator {
                     SagaTccTransactionStatus.CANCELLED, SagaTccBranchStatus.CANCELLED);
         }
         return false;
+    }
+
+    private boolean completeSequentialTerminalPhase(SagaTccTransactionRecord tx,
+                                                    SagaTccAction action) {
+        String sagaId = tx.getSagaId();
+        List<SagaTccBranchRecord> branches = repository.findBranches(sagaId);
+        if (branches.isEmpty()) {
+            return false;
+        }
+        if (containsFailedBranch(branches)) {
+            failUndispatchedSequentialBranches(branches, action);
+            return repository.completeTransactionPhase(sagaId, transactionStatusFor(action),
+                    action == SagaTccAction.CONFIRM
+                            ? SagaTccTransactionStatus.COMMITTED : SagaTccTransactionStatus.CANCELLED,
+                    action == SagaTccAction.CONFIRM
+                            ? SagaTccBranchStatus.CONFIRMED : SagaTccBranchStatus.CANCELLED);
+        }
+        if (action == SagaTccAction.CONFIRM) {
+            dispatchNextSequentialConfirm(tx, branches);
+            return repository.completeTransactionPhase(sagaId, SagaTccTransactionStatus.COMMITTING,
+                    SagaTccTransactionStatus.COMMITTED, SagaTccBranchStatus.CONFIRMED);
+        }
+        if (action == SagaTccAction.CANCEL) {
+            dispatchNextSequentialCancel(tx, branches);
+            return repository.completeTransactionPhase(sagaId, SagaTccTransactionStatus.CANCELLING,
+                    SagaTccTransactionStatus.CANCELLED, SagaTccBranchStatus.CANCELLED);
+        }
+        return false;
+    }
+
+    private boolean containsFailedBranch(List<SagaTccBranchRecord> branches) {
+        for (SagaTccBranchRecord branch : branches) {
+            if (branch.getStatus() == SagaTccBranchStatus.FAILED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void failUndispatchedSequentialBranches(List<SagaTccBranchRecord> branches,
+                                                    SagaTccAction action) {
+        for (SagaTccBranchRecord branch : branches) {
+            SagaTccBranchStatus status = branch.getStatus();
+            boolean undispatched = action == SagaTccAction.CONFIRM
+                    ? status == SagaTccBranchStatus.TRY_SUCCEEDED
+                    : status == SagaTccBranchStatus.TRY_SUCCEEDED
+                    || status == SagaTccBranchStatus.TRY_FAILED;
+            if (undispatched) {
+                repository.transitionBranchStatus(branch.getId(), status, SagaTccBranchStatus.FAILED,
+                        "前置分支执行失败，顺序调度已停止");
+            }
+        }
     }
 
     private String toJson(Object value) {
@@ -481,6 +640,10 @@ public class SagaTccCoordinator {
             return SagaTccTransactionStatus.COMMITTING;
         }
         return SagaTccTransactionStatus.CANCELLING;
+    }
+
+    private boolean isSequentialBranchExecution(String businessCode) {
+        return properties.resolveBranchExecutionMode(businessCode) == SagaTccBranchExecutionMode.SEQUENTIAL;
     }
 
     private void requireManagedDataSource() {
