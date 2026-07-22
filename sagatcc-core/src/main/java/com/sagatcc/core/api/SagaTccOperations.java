@@ -9,9 +9,8 @@ public interface SagaTccOperations {
     void enlist(SagaTccRequest request);
 
     /**
-     * Enlists a branch without requiring the request DTO to carry
-     * {@link SagaTccBusiness}. This is useful when business DTOs must remain
-     * independent from the SagaTcc API.
+     * 登记一个分支，无需请求 DTO 携带 {@link SagaTccBusiness}。
+     * 适用于业务 DTO 需要与 SagaTcc API 保持解耦的场景。
      */
     default void enlist(String targetApplication, String businessCode, SagaTccRequest request) {
         throw new UnsupportedOperationException("explicit SagaTcc branch routing is not supported by this implementation");

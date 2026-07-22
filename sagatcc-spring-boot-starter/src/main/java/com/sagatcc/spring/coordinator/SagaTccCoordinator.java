@@ -90,7 +90,7 @@ public class SagaTccCoordinator {
         this.dataSource = dataSource;
     }
 
-    /** @deprecated use the constructor accepting {@link SagaTccRepository}. */
+    /** @deprecated 请使用接收 {@link SagaTccRepository} 的构造方法。 */
     @Deprecated
     public SagaTccCoordinator(JdbcSagaTccRepository repository, SagaMessagePublisher publisher,
                               ObjectMapper objectMapper, SagaTccProperties properties, Environment environment) {

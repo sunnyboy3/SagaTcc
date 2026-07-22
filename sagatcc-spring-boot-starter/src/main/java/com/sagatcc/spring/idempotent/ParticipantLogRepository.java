@@ -4,7 +4,7 @@ import java.util.concurrent.Callable;
 
 import com.sagatcc.core.message.SagaTccCommandMessage;
 
-/** Persistence extension point for participant-side idempotency. */
+/** 参与方幂等处理的持久化扩展点。 */
 public interface ParticipantLogRepository {
 
     void executeIdempotently(String localApp, SagaTccCommandMessage command,

@@ -234,8 +234,6 @@ class SagaTccParticipantDispatcherTest {
         invalid.add(new InvalidCommand("target colon", c -> c.setTargetApp("wallet:blue")));
         invalid.add(new InvalidCommand("blank business code", c -> c.setBusCode(" ")));
         invalid.add(new InvalidCommand("business code too long", c -> c.setBusCode(repeat('b', 129))));
-        invalid.add(new InvalidCommand("blank request class", c -> c.setRequestClass(" ")));
-        invalid.add(new InvalidCommand("request class too long", c -> c.setRequestClass(repeat('r', 513))));
         invalid.add(new InvalidCommand("null request json", c -> c.setRequestJson(null)));
 
         for (InvalidCommand testCase : invalid) {
@@ -298,21 +296,32 @@ class SagaTccParticipantDispatcherTest {
     }
 
     @Test
-    void mismatchedRequestClassNeverDeserializesOrInvokesParticipant() throws Exception {
+    void legacyRequestClassNameDoesNotBlockRouteCompatibleParticipant() throws Exception {
         RecordingParticipant participant = new RecordingParticipant();
         Fixture fixture = fixture(participant, directRepository(), defaultClassifier(), "wallet");
-        SagaTccCommandMessage command = command(SagaTccAction.TRY, 1L);
-        command.setRequestClass("malicious.UnexpectedRequest");
-        command.setRequestJson("{definitely-not-json");
+        SagaTccCommandMessage command = command(SagaTccAction.CONFIRM, 1L);
+        command.setRequestClass("legacy.wallet.RenamedPaymentRequest");
 
         fixture.dispatcher.dispatch(payload(command));
 
         SagaTccResultMessage result = fixture.singleResult();
-        assertFalse(result.isSuccess());
+        assertTrue(result.isSuccess());
         assertFalse(result.isRetryable());
-        assertTrue(result.getErrorMessage().contains("request class does not match"));
-        assertEquals(0, participant.tryCalls.get());
-        assertEquals(0, fixture.transactionManager.commits.get());
+        assertEquals(1, participant.confirmCalls.get());
+        assertEquals(1, fixture.transactionManager.commits.get());
+    }
+
+    @Test
+    void missingDiagnosticRequestClassDoesNotBlockRouteCompatibleParticipant() throws Exception {
+        RecordingParticipant participant = new RecordingParticipant();
+        Fixture fixture = fixture(participant, directRepository(), defaultClassifier(), "wallet");
+        SagaTccCommandMessage command = command(SagaTccAction.CANCEL, 1L);
+        command.setRequestClass(null);
+
+        fixture.dispatcher.dispatch(payload(command));
+
+        assertTrue(fixture.singleResult().isSuccess());
+        assertEquals(1, participant.cancelCalls.get());
     }
 
     @Test

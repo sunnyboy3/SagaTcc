@@ -1,9 +1,8 @@
--- OFFLINE migration only. Stop producers, coordinators and consumers, drain
--- command/result topics and DLQs, then take a backup before running this file.
--- Legacy participant rows do not record coordinator_app, so an in-flight Saga
--- cannot be migrated without risking a second business execution. Abort before
--- any schema change unless every coordinator and branch is already terminal and
--- no outbox command can still be delivered.
+-- 仅支持离线迁移。执行本文件前必须停止生产方、协调器和消费方，排空
+-- command/result Topic 及死信队列，然后完成数据备份。
+-- 旧版参与方记录不包含 coordinator_app，因此迁移进行中的 Saga 会有业务重复执行风险。
+-- 只有所有协调器事务和分支均已进入终态，且不存在仍可投递的 outbox 命令时，
+-- 才允许继续执行任何表结构变更。
 drop procedure if exists saga_tcc_assert_offline_upgrade_ready;
 delimiter //
 create procedure saga_tcc_assert_offline_upgrade_ready()
@@ -39,10 +38,9 @@ delimiter ;
 call saga_tcc_assert_offline_upgrade_ready();
 drop procedure saga_tcc_assert_offline_upgrade_ready;
 
--- Each table's rebuilding changes are deliberately combined into one ALTER to
--- bound offline migration time and temporary disk usage. Routing keys and
--- idempotency identities are case-sensitive in Java, so pin utf8mb4_bin rather
--- than inheriting version-dependent MySQL defaults.
+-- 每张表的重建操作有意合并到一条 ALTER 中，以控制离线迁移时间和临时磁盘占用。
+-- Java 中的路由键和幂等标识区分大小写，因此固定使用 utf8mb4_bin，
+-- 不继承可能随 MySQL 版本变化的默认排序规则。
 alter table saga_tcc_transaction
   convert to character set utf8mb4 collate utf8mb4_bin,
   row_format = dynamic,
@@ -73,9 +71,8 @@ alter table saga_tcc_outbox
   modify column create_time datetime(3) not null,
   modify column update_time datetime(3) not null;
 
--- The preflight guarantees there are no active branches. Retire any legacy
--- outbox metadata defensively; this update must therefore affect no deliverable
--- row after a successful preflight.
+-- 预检已保证不存在活动分支。这里防御性地废弃旧版 outbox 元数据；
+-- 预检成功后，此更新不应影响任何仍可投递的记录。
 update saga_tcc_outbox
 set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3)
 where action is null and status in ('NEW', 'FAILED', 'SENDING');

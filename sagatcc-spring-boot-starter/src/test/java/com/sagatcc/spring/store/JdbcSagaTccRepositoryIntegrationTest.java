@@ -32,9 +32,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Exercises the production SQL against a real database and real concurrent
- * connections. H2 runs in MySQL compatibility mode so MySQL-specific claim
- * syntax (UPDATE ... ORDER BY ... LIMIT and ON DUPLICATE KEY UPDATE) is parsed too.
+ * 使用真实数据库引擎和真实并发连接验证生产 SQL。
+ * H2 以 MySQL 兼容模式运行，因此也会解析 MySQL 特有的抢占语法
+ *（UPDATE ... ORDER BY ... LIMIT 和 ON DUPLICATE KEY UPDATE）。
  */
 class JdbcSagaTccRepositoryIntegrationTest {
 

@@ -7,6 +7,7 @@ import javax.sql.DataSource;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sagatcc.core.api.SagaTccFailureClassifier;
 import com.sagatcc.core.api.SagaTccOperations;
 import com.sagatcc.core.api.SagaTccParticipant;
@@ -30,7 +31,9 @@ import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,14 +46,19 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration
+@AutoConfigureAfter(JacksonAutoConfiguration.class)
 @EnableScheduling
 @EnableConfigurationProperties(SagaTccProperties.class)
 public class SagaTccAutoConfiguration {
 
-    @Bean
-    @ConditionalOnMissingBean
+    @Bean(name = "sagaTccObjectMapper")
+    @ConditionalOnMissingBean(name = "sagaTccObjectMapper")
     public ObjectMapper sagaTccObjectMapper() {
-        return new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        return new ObjectMapper()
+                .findAndRegisterModules()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.LOWER_CAMEL_CASE)
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true);
     }
 
     @Bean
@@ -110,7 +118,7 @@ public class SagaTccAutoConfiguration {
     @ConditionalOnMissingBean
     public SagaTccCoordinator sagaTccCoordinator(SagaTccRepository repository,
                                                  SagaMessagePublisher publisher,
-                                                 ObjectMapper objectMapper,
+                                                 @Qualifier("sagaTccObjectMapper") ObjectMapper objectMapper,
                                                  SagaTccProperties properties,
                                                  Environment environment,
                                                  @Qualifier("sagaTccTransactionManager")
@@ -145,6 +153,7 @@ public class SagaTccAutoConfiguration {
     public SagaTccParticipantDispatcher sagaTccParticipantDispatcher(SagaTccParticipantRegistry registry,
                                                                      ParticipantLogRepository participantLogRepository,
                                                                      SagaMessagePublisher publisher,
+                                                                     @Qualifier("sagaTccObjectMapper")
                                                                      ObjectMapper objectMapper,
                                                                      SagaTccFailureClassifier failureClassifier,
                                                                      SagaTccProperties properties,
@@ -189,7 +198,9 @@ public class SagaTccAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public RocketMqResultListener rocketMqResultListener(ObjectMapper objectMapper, SagaTccCoordinator coordinator,
+    public RocketMqResultListener rocketMqResultListener(
+                                                         @Qualifier("sagaTccObjectMapper") ObjectMapper objectMapper,
+                                                         SagaTccCoordinator coordinator,
                                                          SagaTccProperties properties, Environment environment) {
         return new RocketMqResultListener(objectMapper, coordinator,
                 SagaTccNameResolver.applicationName(properties, environment), properties.getMaxMessageBytes());

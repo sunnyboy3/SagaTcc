@@ -71,7 +71,7 @@ public class SagaTccParticipantDispatcher {
         this.maxMessageBytes = properties.getMaxMessageBytes();
     }
 
-    /** @deprecated use the constructor accepting the participant log interface and failure classifier. */
+    /** @deprecated 请使用接收参与方日志接口和失败分类器的构造方法。 */
     @Deprecated
     public SagaTccParticipantDispatcher(SagaTccParticipantRegistry registry,
                                         JdbcParticipantLogRepository participantLogRepository,
@@ -107,10 +107,6 @@ public class SagaTccParticipantDispatcher {
             SagaTccParticipantRegistry.ParticipantMeta meta = registry.find(command.getTargetApp(), command.getBusCode());
             if (meta == null) {
                 throw new SagaTccException("no SagaTcc participant for " + command.getTargetApp() + ":" + command.getBusCode());
-            }
-            if (!meta.getRequestClass().getName().equals(command.getRequestClass())) {
-                throw new SagaTccNonRetryableException("request class does not match registered participant, expected="
-                        + meta.getRequestClass().getName() + ", actual=" + command.getRequestClass());
             }
             if (command.getRequestJson().getBytes(StandardCharsets.UTF_8).length > maxRequestBytes) {
                 throw new SagaTccNonRetryableException("request JSON exceeds max-request-bytes");
@@ -204,7 +200,6 @@ public class SagaTccParticipantDispatcher {
         SagaTccNameResolver.validateApplicationName(command.getCoordinatorApp());
         SagaTccNameResolver.validateApplicationName(command.getTargetApp());
         requireText(command.getBusCode(), "busCode", 128);
-        requireText(command.getRequestClass(), "requestClass", 512);
         if (command.getRequestJson() == null) {
             throw new SagaTccException("requestJson must not be null");
         }

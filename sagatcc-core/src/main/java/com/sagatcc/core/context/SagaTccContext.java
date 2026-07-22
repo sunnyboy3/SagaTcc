@@ -47,7 +47,7 @@ public class SagaTccContext {
         return Collections.unmodifiableList(enlistments);
     }
 
-    /** @deprecated use {@link #addEnlistment(SagaTccEnlistment)} */
+    /** @deprecated 请使用 {@link #addEnlistment(SagaTccEnlistment)} */
     @Deprecated
     public void addRequest(SagaTccRequest request) {
         SagaTccBusiness business = request.getClass().getAnnotation(SagaTccBusiness.class);
@@ -57,7 +57,7 @@ public class SagaTccContext {
         addEnlistment(new SagaTccEnlistment(business.appId(), business.busCode(), request));
     }
 
-    /** @deprecated use {@link #getEnlistments()} */
+    /** @deprecated 请使用 {@link #getEnlistments()} */
     @Deprecated
     public List<SagaTccRequest> getRequests() {
         List<SagaTccRequest> requests = new ArrayList<SagaTccRequest>(enlistments.size());

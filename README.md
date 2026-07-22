@@ -183,6 +183,10 @@ sagaTccOperations.enlist("wallet-service", "walletPay", payRequest);
 - JDBC 自定义存储应同时实现 `SagaTccDataSourceProvider`，starter 才能校验配置的事务管理器确实覆盖业务、协调 outbox 和参与方幂等写入；非 JDBC 实现必须自行提供等价原子性保证，starter 无法代为验证。
 - `SagaTccFailureClassifier`：区分可重试与永久性参与方异常。永久性 Confirm/Cancel 失败会先将当前分支置为 `FAILED`，其余已决分支继续执行，全部分支终态后父事务再聚合为 `FAILED`。
 
+starter 使用名为 `sagaTccObjectMapper` 的独立协议 `ObjectMapper`，固定使用 lowerCamelCase 字段并忽略未知字段，避免业务应用自己的命名策略或严格反序列化配置改变 Saga 消息协议。如需注册自定义 DTO 模块，可以声明同名 Bean 覆盖，但必须保持跨服务协议配置一致。
+
+命令通过 `targetApp + busCode` 定位参与方，并使用参与方注册的请求类型反序列化。消息中的 `requestClass` 仅保留作诊断信息，不参与路由或兼容性校验，因此 DTO 改包、改名不会阻断已有 Saga 的 Confirm/Cancel；请求 JSON 本身仍需保持向后兼容。
+
 以上类型都可通过声明同类型 Spring Bean 覆盖默认实现。
 
 ## 边界设计

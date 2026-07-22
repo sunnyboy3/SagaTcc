@@ -4,11 +4,15 @@ import java.util.Collections;
 
 import javax.sql.DataSource;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sagatcc.core.api.SagaTccOperations;
+import com.sagatcc.core.message.SagaTccCommandMessage;
 import com.sagatcc.spring.coordinator.DefaultSagaTccOperations;
 import com.sagatcc.spring.coordinator.SagaTccCoordinator;
 import com.sagatcc.spring.idempotent.ParticipantLogRepository;
+import com.sagatcc.spring.messaging.RocketMqResultListener;
 import com.sagatcc.spring.messaging.SagaMessagePublisher;
 import com.sagatcc.spring.participant.SagaTccParticipantDispatcher;
 import com.sagatcc.spring.participant.SagaTccParticipantRegistry;
@@ -16,6 +20,7 @@ import com.sagatcc.spring.store.SagaTccDataSourceProvider;
 import com.sagatcc.spring.store.SagaTccRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -30,6 +35,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -176,6 +182,47 @@ class SagaTccAutoConfigurationTest {
                             .isSameAs(context.getBean("transactionManager"));
                     assertThat(context.getBeanNamesForType(PlatformTransactionManager.class))
                             .containsExactly("transactionManager");
+                });
+    }
+
+    @Test
+    void dedicatedProtocolMapperIsIsolatedFromApplicationJacksonSettings() {
+        ObjectMapper applicationMapper = new ObjectMapper()
+                .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        TransactionAutoConfiguration.class, SagaTccAutoConfiguration.class))
+                .withPropertyValues("sagatcc.application-name=order", "sagatcc.scheduler-enabled=false")
+                .withBean("applicationObjectMapper", ObjectMapper.class, () -> applicationMapper)
+                .withBean("transactionManager", PlatformTransactionManager.class,
+                        () -> mock(PlatformTransactionManager.class))
+                .withBean(SagaTccRepository.class, () -> mock(SagaTccRepository.class))
+                .withBean(ParticipantLogRepository.class, () -> mock(ParticipantLogRepository.class))
+                .withBean(SagaMessagePublisher.class, () -> mock(SagaMessagePublisher.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    ObjectMapper protocolMapper = context.getBean("sagaTccObjectMapper", ObjectMapper.class);
+                    assertThat(protocolMapper).isNotSameAs(applicationMapper);
+                    assertThat(context.getBeansOfType(ObjectMapper.class)).hasSize(2);
+                    assertThat(protocolMapper.getPropertyNamingStrategy())
+                            .isSameAs(PropertyNamingStrategies.LOWER_CAMEL_CASE);
+                    assertThat(protocolMapper.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)).isFalse();
+                    assertThat(protocolMapper.isEnabled(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)).isTrue();
+                    assertThatCode(() -> protocolMapper.readValue(
+                            "{\"messageKey\":\"key\",\"futureField\":true}", SagaTccCommandMessage.class))
+                            .doesNotThrowAnyException();
+
+                    SagaTccCoordinator coordinator = AopTestUtils.getTargetObject(
+                            context.getBean(SagaTccCoordinator.class));
+                    assertThat(ReflectionTestUtils.getField(coordinator, "objectMapper")).isSameAs(protocolMapper);
+                    assertThat(ReflectionTestUtils.getField(
+                            context.getBean(SagaTccParticipantDispatcher.class), "objectMapper"))
+                            .isSameAs(protocolMapper);
+                    assertThat(ReflectionTestUtils.getField(
+                            context.getBean(RocketMqResultListener.class), "objectMapper"))
+                            .isSameAs(protocolMapper);
                 });
     }
 }

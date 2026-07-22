@@ -1,6 +1,6 @@
 package com.sagatcc.core.api;
 
-/** A protocol or business failure that cannot succeed when retried unchanged. */
+/** 在条件不变时重试也无法成功的协议或业务失败。 */
 public class SagaTccNonRetryableException extends SagaTccException {
 
     public SagaTccNonRetryableException(String message) {

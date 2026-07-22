@@ -1,5 +1,8 @@
 package com.sagatcc.core.message;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SagaTccCommandMessage {
 
     private String messageKey;
@@ -9,6 +12,10 @@ public class SagaTccCommandMessage {
     private String targetApp;
     private String busCode;
     private SagaTccAction action;
+    /**
+     * 生产方 DTO 类名，仅保留用于问题诊断。消费方根据 targetApp + busCode
+     * 解析实际请求类型，避免 Java 类改名影响执行中的 Saga 命令。
+     */
     private String requestClass;
     private String requestJson;
     private int attempt;

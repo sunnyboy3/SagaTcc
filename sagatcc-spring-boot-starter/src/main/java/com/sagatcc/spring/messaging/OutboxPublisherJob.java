@@ -33,7 +33,7 @@ public class OutboxPublisherJob {
         this.executor = executor;
     }
 
-    /** @deprecated repository and publisher are owned by the coordinator. */
+    /** @deprecated repository 和 publisher 由协调器持有。 */
     @Deprecated
     public OutboxPublisherJob(JdbcSagaTccRepository repository, SagaMessagePublisher publisher,
                               SagaTccCoordinator coordinator, SagaTccProperties properties) {

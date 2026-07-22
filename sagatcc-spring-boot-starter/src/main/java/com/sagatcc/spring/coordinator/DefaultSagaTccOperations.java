@@ -155,9 +155,9 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
                         + "a savepoint rollback cannot remove transaction synchronizations safely");
             }
         } catch (NoTransactionException ignored) {
-            // Programmatic transaction managers do not always expose their status
-            // through TransactionAspectSupport. The active/resource checks below
-            // still protect the supported REQUIRED/REQUIRES_NEW paths.
+            // 编程式事务管理器不一定通过 TransactionAspectSupport 暴露状态。
+            // 下方的事务活动状态和资源检查仍能保护受支持的
+            // REQUIRED/REQUIRES_NEW 路径。
         }
         if (dataSource != null && !TransactionSynchronizationManager.hasResource(dataSource)) {
             throw new SagaTccException("the active transaction does not manage the SagaTcc JDBC DataSource; "

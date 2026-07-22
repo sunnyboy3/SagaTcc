@@ -12,9 +12,8 @@ import com.sagatcc.core.model.SagaTccTransactionRecord;
 import com.sagatcc.core.model.SagaTccTransactionStatus;
 
 /**
- * Persistence extension point for coordinator state and the transactional
- * outbox. Custom stores must preserve the compare-and-set semantics of the
- * transition and claim methods.
+ * 协调器状态和事务 outbox 的持久化扩展点。
+ * 自定义存储必须保留状态迁移和抢占方法的比较并设置语义。
  */
 public interface SagaTccRepository {
 
@@ -23,7 +22,7 @@ public interface SagaTccRepository {
     long insertBranch(String sagaId, int branchNo, String targetApp, String busCode,
                       String requestClass, String requestJson);
 
-    /** @deprecated action and attempt metadata are required for safe phase fencing. */
+    /** @deprecated 安全的阶段隔离必须包含 action 和 attempt 元数据。 */
     @Deprecated
     void enqueueOutbox(String messageKey, String sagaId, long branchId, String topic, String tag, String payload);
 
@@ -35,9 +34,8 @@ public interface SagaTccRepository {
     SagaTccTransactionRecord findTransaction(String sagaId);
 
     /**
-     * Locks the transaction row so results for the same Saga are serialized.
-     * The default fails fast so custom stores cannot silently run without the
-     * required concurrency guarantee.
+     * 锁定事务行，使同一 Saga 的结果串行处理。
+     * 默认实现直接快速失败，防止自定义存储在缺少必要并发保证时静默运行。
      */
     default SagaTccTransactionRecord findTransactionForUpdate(String sagaId) {
         throw new UnsupportedOperationException("custom SagaTccRepository must lock the parent transaction row");
@@ -45,7 +43,7 @@ public interface SagaTccRepository {
 
     SagaTccBranchRecord findBranch(long branchId);
 
-    /** Loads the serialized request only after a worker has won a retry CAS. */
+    /** 仅在工作线程通过重试 CAS 竞争后加载序列化请求。 */
     default SagaTccBranchRecord findBranchWithPayload(long branchId) {
         return findBranch(branchId);
     }
@@ -60,9 +58,9 @@ public interface SagaTccRepository {
                                         SagaTccTransactionStatus... expectedStatuses);
 
     /**
-     * Finalizes a Confirm/Cancel phase only after every branch is terminal.
-     * A phase with any failed branch becomes {@code FAILED}; otherwise it
-     * reaches {@code completedTransactionStatus}.
+     * 仅当所有分支都进入终态后，才结束 Confirm/Cancel 阶段。
+     * 任一分支失败时阶段进入 {@code FAILED}，否则进入
+     * {@code completedTransactionStatus}。
      */
     default boolean completeTransactionPhase(String sagaId,
                                              SagaTccTransactionStatus expectedTransactionStatus,
@@ -109,9 +107,8 @@ public interface SagaTccRepository {
     SagaTccOutboxRecord claimNextReadyOutbox();
 
     /**
-     * Claims up to {@code limit} rows. Implementations should override this
-     * method with a set-based claim; the default keeps custom stores source
-     * compatible.
+     * 最多抢占 {@code limit} 行。实现类应重写为基于集合的批量抢占；
+     * 默认实现用于保持自定义存储的源码兼容性。
      */
     default List<SagaTccOutboxRecord> claimReadyOutbox(int limit) {
         List<SagaTccOutboxRecord> claimed = new ArrayList<SagaTccOutboxRecord>();

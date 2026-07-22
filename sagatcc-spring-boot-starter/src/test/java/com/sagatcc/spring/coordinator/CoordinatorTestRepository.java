@@ -23,9 +23,9 @@ import com.sagatcc.core.model.SagaTccTransactionStatus;
 import com.sagatcc.spring.store.SagaTccRepository;
 
 /**
- * Small compare-and-set repository used by coordinator concurrency tests. It
- * intentionally returns detached rows from scans, matching JDBC query
- * behaviour instead of sharing mutable records between competing workers.
+ * 协调器并发测试使用的轻量级比较并设置仓库。
+ * 扫描时有意返回分离的行对象，以模拟 JDBC 查询行为，
+ * 避免竞争中的工作线程共享可变记录。
  */
 final class CoordinatorTestRepository implements SagaTccRepository {
 
@@ -349,7 +349,7 @@ final class CoordinatorTestRepository implements SagaTccRepository {
 
     @Override
     public void scheduleBranchRetry(long branchId, int attempts) {
-        // Scheduling only changes the timestamp in JDBC; attempts advance when dispatched.
+        // JDBC 调度只更新时间戳；attempt 在实际派发时递增。
         scheduledBranchRetries.incrementAndGet();
     }
 

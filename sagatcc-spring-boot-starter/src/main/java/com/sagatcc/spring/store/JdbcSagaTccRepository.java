@@ -340,7 +340,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         return updated;
     }
 
-    /** Retained for operational queries; publishers should claim before sending. */
+    /** 保留给运维查询使用；发布方发送前必须先抢占记录。 */
     public List<SagaTccOutboxRecord> findReadyOutbox() {
         return jdbcTemplate.query("select * from saga_tcc_outbox where status in ('NEW','FAILED','SENDING') " +
                         "and attempts < ? and next_retry_time <= current_timestamp(3) order by id limit ?",
@@ -481,8 +481,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         if (jitterPercent == 0 || delay <= 1) {
             return delay;
         }
-        // Divide before multiplying so very large, valid delay values do not
-        // overflow and accidentally turn a minutes/hours backoff into 1 ms.
+        // 先除后乘，避免合法但很大的延迟值发生溢出，
+        // 从而将分钟或小时级的退避时间意外变成 1 毫秒。
         long range = percentageOf(delay, jitterPercent);
         if (range == 0) {
             return delay;
@@ -492,8 +492,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         if (lower >= upper) {
             return lower;
         }
-        // nextLong uses an exclusive upper bound. Avoid overflowing when an
-        // operator deliberately configures Long.MAX_VALUE as the retry cap.
+        // nextLong 的上界不包含在取值范围内。当运维人员将 Long.MAX_VALUE
+        // 配置为重试上限时，需要避免上界加一发生溢出。
         if (upper == Long.MAX_VALUE) {
             return ThreadLocalRandom.current().nextLong(lower, upper);
         }
