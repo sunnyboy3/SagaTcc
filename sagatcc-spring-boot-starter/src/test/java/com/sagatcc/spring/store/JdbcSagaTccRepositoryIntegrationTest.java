@@ -35,8 +35,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * 使用真实数据库引擎和真实并发连接验证生产 SQL。
- * H2 以 MySQL 兼容模式运行，因此也会解析 MySQL 特有的抢占语法
- *（UPDATE ... ORDER BY ... LIMIT 和 ON DUPLICATE KEY UPDATE）。
+ * H2 以 MySQL 兼容模式运行，因此也会解析生产环境使用的
+ * ON DUPLICATE KEY UPDATE、时间函数和按主键排序更新语法。
  */
 class JdbcSagaTccRepositoryIntegrationTest {
 

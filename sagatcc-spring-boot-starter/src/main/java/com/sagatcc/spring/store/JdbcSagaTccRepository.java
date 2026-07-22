@@ -20,6 +20,7 @@ import com.sagatcc.core.model.SagaTccTransactionStatus;
 import com.sagatcc.spring.config.SagaTccProperties;
 
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.PreparedStatementCreator;
 import org.springframework.jdbc.core.RowMapper;
@@ -34,6 +35,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     private static final SagaTccBranchStatus[] RETRYABLE_BRANCH_STATUSES = {
             SagaTccBranchStatus.TRYING, SagaTccBranchStatus.CONFIRMING, SagaTccBranchStatus.CANCELLING
     };
+    private static final int OUTBOX_CLAIM_MAX_ATTEMPTS = 3;
+    private static final long OUTBOX_CLAIM_RETRY_BASE_DELAY_MILLIS = 10L;
 
     private final JdbcTemplate jdbcTemplate;
     private final SagaTccProperties properties;
@@ -397,21 +400,73 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     private int claimReadyOutbox(SagaTccOutboxStatus sourceStatus, String claimToken,
                                  long leaseMillis, int claimLimit) {
-        return jdbcTemplate.update("update " + outboxTable + " o set status = ?, claim_token = ?, "
-                        + "next_retry_time = timestampadd(microsecond, ?, current_timestamp(3)), "
-                        + "update_time = current_timestamp(3) where status = ? "
-                        + "and attempts < ? and next_retry_time <= current_timestamp(3) and exists (select 1 from "
-                        + branchTable + " b join " + transactionTable + " tx on tx.saga_id = b.saga_id "
-                        + "where b.id = o.branch_id "
+        for (int attempt = 1; attempt <= OUTBOX_CLAIM_MAX_ATTEMPTS; attempt++) {
+            try {
+                return claimReadyOutboxOnce(sourceStatus, claimToken, leaseMillis, claimLimit);
+            } catch (PessimisticLockingFailureException e) {
+                if (attempt == OUTBOX_CLAIM_MAX_ATTEMPTS) {
+                    throw e;
+                }
+                pauseBeforeOutboxClaimRetry(attempt);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 候选查询只做一致性读取，真正抢占仅按 Outbox 主键加锁。
+     * 这样可以避免抢占线程按 Outbox→事务表的顺序加锁，而结果处理线程按事务表→Outbox 的顺序加锁。
+     */
+    private int claimReadyOutboxOnce(SagaTccOutboxStatus sourceStatus, String claimToken,
+                                     long leaseMillis, int claimLimit) {
+        List<Long> candidateIds = jdbcTemplate.queryForList(
+                "select o.id from " + outboxTable + " o join " + branchTable + " b on b.id = o.branch_id "
+                        + "join " + transactionTable + " tx on tx.saga_id = b.saga_id "
+                        + "where o.status = ? and o.attempts < ? "
+                        + "and o.next_retry_time <= current_timestamp(3) "
                         + "and ((o.action = 'TRY' and b.status = 'TRYING' "
                         + "and b.try_attempts = o.command_attempt and tx.status = 'TRYING') "
                         + "or (o.action = 'CONFIRM' and b.status = 'CONFIRMING' "
                         + "and b.confirm_attempts = o.command_attempt and tx.status = 'COMMITTING') "
                         + "or (o.action = 'CANCEL' and b.status = 'CANCELLING' "
-                        + "and b.cancel_attempts = o.command_attempt and tx.status = 'CANCELLING'))) "
-                        + "order by next_retry_time, id limit ?",
-                SagaTccOutboxStatus.SENDING.name(), claimToken, delayMicros(leaseMillis),
-                sourceStatus.name(), properties.getMaxAttempts(), claimLimit);
+                        + "and b.cancel_attempts = o.command_attempt and tx.status = 'CANCELLING')) "
+                        + "order by o.next_retry_time, o.id limit ?",
+                Long.class, sourceStatus.name(), properties.getMaxAttempts(), claimLimit);
+        if (candidateIds.isEmpty()) {
+            return 0;
+        }
+
+        StringBuilder sql = new StringBuilder("update ").append(outboxTable)
+                .append(" set status = ?, claim_token = ?, next_retry_time = ")
+                .append("timestampadd(microsecond, ?, current_timestamp(3)), ")
+                .append("update_time = current_timestamp(3) where status = ? and attempts < ? ")
+                .append("and next_retry_time <= current_timestamp(3) and id in (");
+        List<Object> args = new ArrayList<Object>();
+        args.add(SagaTccOutboxStatus.SENDING.name());
+        args.add(claimToken);
+        args.add(delayMicros(leaseMillis));
+        args.add(sourceStatus.name());
+        args.add(properties.getMaxAttempts());
+        for (int i = 0; i < candidateIds.size(); i++) {
+            if (i > 0) {
+                sql.append(',');
+            }
+            sql.append('?');
+            args.add(candidateIds.get(i));
+        }
+        sql.append(") order by id");
+        return jdbcTemplate.update(sql.toString(), args.toArray());
+    }
+
+    private void pauseBeforeOutboxClaimRetry(int failedAttempt) {
+        long minimumDelay = OUTBOX_CLAIM_RETRY_BASE_DELAY_MILLIS * failedAttempt;
+        long delay = ThreadLocalRandom.current().nextLong(minimumDelay, minimumDelay * 2L + 1L);
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SagaTccException("Outbox 抢占重试等待被中断", e);
+        }
     }
 
     @Override
