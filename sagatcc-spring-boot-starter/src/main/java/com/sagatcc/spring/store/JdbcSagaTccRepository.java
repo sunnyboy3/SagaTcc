@@ -37,6 +37,9 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     private final JdbcTemplate jdbcTemplate;
     private final SagaTccProperties properties;
+    private final String transactionTable;
+    private final String branchTable;
+    private final String outboxTable;
     private final AtomicInteger outboxStatusCursor = new AtomicInteger();
     private final AtomicInteger branchStatusCursor = new AtomicInteger();
 
@@ -119,6 +122,10 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     public JdbcSagaTccRepository(JdbcTemplate jdbcTemplate, SagaTccProperties properties) {
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
+        SagaTccTableNames tableNames = new SagaTccTableNames(properties.getSchema());
+        this.transactionTable = tableNames.transaction();
+        this.branchTable = tableNames.branch();
+        this.outboxTable = tableNames.outbox();
     }
 
     @Override
@@ -128,7 +135,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     @Override
     public void insertTransaction(SagaTccContext context, int branchCount) {
-        jdbcTemplate.update("insert into saga_tcc_transaction " +
+        jdbcTemplate.update("insert into " + transactionTable + " " +
                         "(saga_id, coordinator_app, business_code, business_id, status, branch_count, next_retry_time, create_time, update_time) " +
                         "values (?, ?, ?, ?, ?, ?, current_timestamp(3), current_timestamp(3), current_timestamp(3))",
                 context.getSagaId(), context.getCoordinatorApp(), context.getBusinessCode(), context.getBusinessId(),
@@ -140,7 +147,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
                              String requestClass, String requestJson) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update((PreparedStatementCreator) connection -> {
-            PreparedStatement ps = connection.prepareStatement("insert into saga_tcc_branch " +
+            PreparedStatement ps = connection.prepareStatement("insert into " + branchTable + " " +
                             "(saga_id, branch_no, target_app, bus_code, request_class, request_json, status, next_retry_time, create_time, update_time) " +
                             "values (?, ?, ?, ?, ?, ?, ?, current_timestamp(3), current_timestamp(3), current_timestamp(3))",
                     Statement.RETURN_GENERATED_KEYS);
@@ -170,7 +177,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         if (action == null || commandAttempt <= 0) {
             throw new IllegalArgumentException("outbox action and positive command attempt are required");
         }
-        jdbcTemplate.update("insert into saga_tcc_outbox " +
+        jdbcTemplate.update("insert into " + outboxTable + " " +
                         "(message_key, saga_id, branch_id, topic, tag, action, command_attempt, payload, status, attempts, "
                         + "next_retry_time, create_time, update_time) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, "
                         + "current_timestamp(3), current_timestamp(3), current_timestamp(3)) "
@@ -182,7 +189,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public SagaTccTransactionRecord findTransaction(String sagaId) {
         try {
-            return jdbcTemplate.queryForObject("select * from saga_tcc_transaction where saga_id = ?", transactionMapper, sagaId);
+            return jdbcTemplate.queryForObject("select * from " + transactionTable + " where saga_id = ?",
+                    transactionMapper, sagaId);
         } catch (EmptyResultDataAccessException e) {
             return null;
         }
@@ -192,7 +200,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     public SagaTccTransactionRecord findTransactionForUpdate(String sagaId) {
         try {
             return jdbcTemplate.queryForObject(
-                    "select * from saga_tcc_transaction where saga_id = ? for update",
+                    "select * from " + transactionTable + " where saga_id = ? for update",
                     transactionMapper, sagaId);
         } catch (EmptyResultDataAccessException e) {
             return null;
@@ -204,7 +212,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         try {
             return jdbcTemplate.queryForObject("select id, saga_id, branch_no, target_app, bus_code, status, "
                             + "try_attempts, confirm_attempts, cancel_attempts, failure_attempt, last_error, next_retry_time, "
-                            + "create_time, update_time from saga_tcc_branch where id = ?",
+                            + "create_time, update_time from " + branchTable + " where id = ?",
                     branchStateMapper, branchId);
         } catch (EmptyResultDataAccessException e) {
             return null;
@@ -214,7 +222,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public SagaTccBranchRecord findBranchWithPayload(long branchId) {
         try {
-            return jdbcTemplate.queryForObject("select * from saga_tcc_branch where id = ?", branchMapper, branchId);
+            return jdbcTemplate.queryForObject("select * from " + branchTable + " where id = ?",
+                    branchMapper, branchId);
         } catch (EmptyResultDataAccessException e) {
             return null;
         }
@@ -222,21 +231,23 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     @Override
     public List<SagaTccBranchRecord> findBranches(String sagaId) {
-        return jdbcTemplate.query("select * from saga_tcc_branch where saga_id = ? order by branch_no", branchMapper, sagaId);
+        return jdbcTemplate.query("select * from " + branchTable + " where saga_id = ? order by branch_no",
+                branchMapper, sagaId);
     }
 
     @Override
     public boolean allBranchesInStatus(String sagaId, SagaTccBranchStatus status) {
         Integer result = jdbcTemplate.queryForObject("select case when count(*) > 0 "
                         + "and sum(case when status = ? then 1 else 0 end) = count(*) then 1 else 0 end "
-                        + "from saga_tcc_branch where saga_id = ?",
+                        + "from " + branchTable + " where saga_id = ?",
                 Integer.class, status.name(), sagaId);
         return Integer.valueOf(1).equals(result);
     }
 
     @Override
     public void updateTransactionStatus(String sagaId, SagaTccTransactionStatus status) {
-        jdbcTemplate.update("update saga_tcc_transaction set status = ?, update_time = current_timestamp(3) where saga_id = ?",
+        jdbcTemplate.update("update " + transactionTable
+                        + " set status = ?, update_time = current_timestamp(3) where saga_id = ?",
                 status.name(), sagaId);
     }
 
@@ -246,7 +257,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         if (expectedStatuses == null || expectedStatuses.length == 0) {
             throw new IllegalArgumentException("expectedStatuses must not be empty");
         }
-        StringBuilder sql = new StringBuilder("update saga_tcc_transaction set status = ?, update_time = current_timestamp(3) "
+        StringBuilder sql = new StringBuilder("update " + transactionTable
+                + " set status = ?, update_time = current_timestamp(3) "
                 + "where saga_id = ? and status in (");
         List<Object> args = new ArrayList<Object>();
         args.add(status.name());
@@ -261,12 +273,12 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
                                             SagaTccTransactionStatus expectedTransactionStatus,
                                             SagaTccTransactionStatus completedTransactionStatus,
                                             SagaTccBranchStatus completedBranchStatus) {
-        return jdbcTemplate.update("update saga_tcc_transaction tx set status = case "
-                        + "when exists (select 1 from saga_tcc_branch failed where failed.saga_id = tx.saga_id "
+        return jdbcTemplate.update("update " + transactionTable + " tx set status = case "
+                        + "when exists (select 1 from " + branchTable + " failed where failed.saga_id = tx.saga_id "
                         + "and failed.status = 'FAILED') then 'FAILED' else ? end, update_time = current_timestamp(3) "
                         + "where tx.saga_id = ? and tx.status = ? "
-                        + "and exists (select 1 from saga_tcc_branch present where present.saga_id = tx.saga_id) "
-                        + "and not exists (select 1 from saga_tcc_branch pending where pending.saga_id = tx.saga_id "
+                        + "and exists (select 1 from " + branchTable + " present where present.saga_id = tx.saga_id) "
+                        + "and not exists (select 1 from " + branchTable + " pending where pending.saga_id = tx.saga_id "
                         + "and pending.status not in (?, 'FAILED'))",
                 completedTransactionStatus.name(), sagaId, expectedTransactionStatus.name(),
                 completedBranchStatus.name()) == 1;
@@ -275,7 +287,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public void updateBranchStatus(long branchId, SagaTccBranchStatus status, String error) {
         int updated = jdbcTemplate.update(
-                "update saga_tcc_branch set status = ?, last_error = ?, update_time = current_timestamp(3) where id = ?",
+                "update " + branchTable
+                        + " set status = ?, last_error = ?, update_time = current_timestamp(3) where id = ?",
                 status.name(), trimError(error), branchId);
         if (updated == 1 && !isDispatchable(status)) {
             discardActiveOutbox(branchId);
@@ -285,7 +298,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public boolean transitionBranchStatus(long branchId, SagaTccBranchStatus expectedStatus,
                                           SagaTccBranchStatus status, String error) {
-        boolean updated = jdbcTemplate.update("update saga_tcc_branch set status = ?, last_error = ?, update_time = current_timestamp(3) "
+        boolean updated = jdbcTemplate.update("update " + branchTable
+                        + " set status = ?, last_error = ?, update_time = current_timestamp(3) "
                         + "where id = ? and status = ?",
                 status.name(), trimError(error), branchId, expectedStatus.name()) == 1;
         if (updated && !isDispatchable(status)) {
@@ -297,7 +311,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public boolean recordBranchFailure(long branchId, SagaTccBranchStatus expectedStatus,
                                        int attempt, String error) {
-        return jdbcTemplate.update("update saga_tcc_branch set last_error = ?, failure_attempt = ?, "
+        return jdbcTemplate.update("update " + branchTable + " set last_error = ?, failure_attempt = ?, "
                         + "update_time = current_timestamp(3) where id = ? and status = ? and failure_attempt < ?",
                 trimError(error), attempt, branchId, expectedStatus.name(), attempt) == 1;
     }
@@ -305,7 +319,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     @Override
     public void markActionDispatched(long branchId, SagaTccBranchStatus status, int attempt) {
         String column = attemptsColumn(status);
-        int updated = jdbcTemplate.update("update saga_tcc_branch set status = ?, " + column + " = greatest(" + column
+        int updated = jdbcTemplate.update("update " + branchTable + " set status = ?, " + column
+                        + " = greatest(" + column
                         + ", ?), failure_attempt = 0, next_retry_time = "
                         + "timestampadd(microsecond, ?, current_timestamp(3)), update_time = current_timestamp(3) "
                         + "where id = ?",
@@ -327,11 +342,12 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
                                        int currentAttempt, int nextAttempt,
                                        SagaTccTransactionStatus expectedTransactionStatus) {
         String column = attemptsColumn(status);
-        boolean updated = jdbcTemplate.update("update saga_tcc_branch set " + column + " = ?, next_retry_time = "
+        boolean updated = jdbcTemplate.update("update " + branchTable + " b set " + column
+                        + " = ?, next_retry_time = "
                         + "timestampadd(microsecond, ?, current_timestamp(3)), update_time = current_timestamp(3) "
                         + "where id = ? and status = ? and " + column
-                        + " = ? and next_retry_time <= current_timestamp(3) and exists (select 1 from saga_tcc_transaction tx "
-                        + "where tx.saga_id = saga_tcc_branch.saga_id and tx.status = ?)",
+                        + " = ? and next_retry_time <= current_timestamp(3) and exists (select 1 from "
+                        + transactionTable + " tx where tx.saga_id = b.saga_id and tx.status = ?)",
                 nextAttempt, delayMicros(retryDelayMillis(nextAttempt)),
                 branchId, status.name(), currentAttempt, expectedTransactionStatus.name()) == 1;
         if (updated) {
@@ -342,7 +358,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     /** 保留给运维查询使用；发布方发送前必须先抢占记录。 */
     public List<SagaTccOutboxRecord> findReadyOutbox() {
-        return jdbcTemplate.query("select * from saga_tcc_outbox where status in ('NEW','FAILED','SENDING') " +
+        return jdbcTemplate.query("select * from " + outboxTable + " where status in ('NEW','FAILED','SENDING') " +
                         "and attempts < ? and next_retry_time <= current_timestamp(3) order by id limit ?",
                 outboxMapper, properties.getMaxAttempts(), properties.getScanBatchSize());
     }
@@ -375,23 +391,24 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         if (updated == 0) {
             return new ArrayList<SagaTccOutboxRecord>();
         }
-        return jdbcTemplate.query("select * from saga_tcc_outbox where claim_token = ? order by id",
+        return jdbcTemplate.query("select * from " + outboxTable + " where claim_token = ? order by id",
                 outboxMapper, claimToken);
     }
 
     private int claimReadyOutbox(SagaTccOutboxStatus sourceStatus, String claimToken,
                                  long leaseMillis, int claimLimit) {
-        return jdbcTemplate.update("update saga_tcc_outbox set status = ?, claim_token = ?, "
+        return jdbcTemplate.update("update " + outboxTable + " o set status = ?, claim_token = ?, "
                         + "next_retry_time = timestampadd(microsecond, ?, current_timestamp(3)), "
                         + "update_time = current_timestamp(3) where status = ? "
-                        + "and attempts < ? and next_retry_time <= current_timestamp(3) and exists (select 1 from saga_tcc_branch b "
-                        + "join saga_tcc_transaction tx on tx.saga_id = b.saga_id where b.id = saga_tcc_outbox.branch_id "
-                        + "and ((saga_tcc_outbox.action = 'TRY' and b.status = 'TRYING' "
-                        + "and b.try_attempts = saga_tcc_outbox.command_attempt and tx.status = 'TRYING') "
-                        + "or (saga_tcc_outbox.action = 'CONFIRM' and b.status = 'CONFIRMING' "
-                        + "and b.confirm_attempts = saga_tcc_outbox.command_attempt and tx.status = 'COMMITTING') "
-                        + "or (saga_tcc_outbox.action = 'CANCEL' and b.status = 'CANCELLING' "
-                        + "and b.cancel_attempts = saga_tcc_outbox.command_attempt and tx.status = 'CANCELLING'))) "
+                        + "and attempts < ? and next_retry_time <= current_timestamp(3) and exists (select 1 from "
+                        + branchTable + " b join " + transactionTable + " tx on tx.saga_id = b.saga_id "
+                        + "where b.id = o.branch_id "
+                        + "and ((o.action = 'TRY' and b.status = 'TRYING' "
+                        + "and b.try_attempts = o.command_attempt and tx.status = 'TRYING') "
+                        + "or (o.action = 'CONFIRM' and b.status = 'CONFIRMING' "
+                        + "and b.confirm_attempts = o.command_attempt and tx.status = 'COMMITTING') "
+                        + "or (o.action = 'CANCEL' and b.status = 'CANCELLING' "
+                        + "and b.cancel_attempts = o.command_attempt and tx.status = 'CANCELLING'))) "
                         + "order by next_retry_time, id limit ?",
                 SagaTccOutboxStatus.SENDING.name(), claimToken, delayMicros(leaseMillis),
                 sourceStatus.name(), properties.getMaxAttempts(), claimLimit);
@@ -401,15 +418,17 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     public void markOutboxSent(SagaTccOutboxRecord outbox) {
         SagaTccBranchStatus branchStatus = branchStatusFor(outbox.getAction());
         String attemptsColumn = attemptsColumn(branchStatus);
-        jdbcTemplate.update("update saga_tcc_branch set next_retry_time = "
+        jdbcTemplate.update("update " + branchTable + " set next_retry_time = "
                         + "timestampadd(microsecond, ?, current_timestamp(3)), update_time = current_timestamp(3) "
                         + "where id = ? "
-                        + "and status = ? and " + attemptsColumn + " = ? and exists (select 1 from saga_tcc_outbox o "
+                        + "and status = ? and " + attemptsColumn + " = ? and exists (select 1 from "
+                        + outboxTable + " o "
                         + "where o.id = ? and o.status = 'SENDING' and o.claim_token = ?)",
                 delayMicros(retryDelayMillis(outbox.getCommandAttempt())),
                 outbox.getBranchId(), branchStatus.name(), outbox.getCommandAttempt(),
                 outbox.getId(), outbox.getClaimToken());
-        jdbcTemplate.update("update saga_tcc_outbox set status = ?, claim_token = null, update_time = current_timestamp(3) "
+        jdbcTemplate.update("update " + outboxTable
+                        + " set status = ?, claim_token = null, update_time = current_timestamp(3) "
                         + "where id = ? and status = ? and claim_token = ?",
                 SagaTccOutboxStatus.SENT.name(), outbox.getId(), SagaTccOutboxStatus.SENDING.name(),
                 outbox.getClaimToken());
@@ -420,7 +439,8 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         long delay = retryDelayMillis(attempts);
         SagaTccOutboxStatus status = attempts >= properties.getMaxAttempts()
                 ? SagaTccOutboxStatus.DEAD : SagaTccOutboxStatus.FAILED;
-        jdbcTemplate.update("update saga_tcc_outbox set status = ?, attempts = attempts + 1, claim_token = null, "
+        jdbcTemplate.update("update " + outboxTable
+                        + " set status = ?, attempts = attempts + 1, claim_token = null, "
                         + "next_retry_time = timestampadd(microsecond, ?, current_timestamp(3)), "
                         + "update_time = current_timestamp(3) where id = ? and status = ? and claim_token = ?",
                 status.name(), delayMicros(delay),
@@ -449,10 +469,11 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
         return jdbcTemplate.query("select b.id, b.saga_id, b.branch_no, b.target_app, b.bus_code, b.status, "
                         + "b.try_attempts, b.confirm_attempts, b.cancel_attempts, b.failure_attempt, "
                         + "b.last_error, b.next_retry_time, b.create_time, b.update_time "
-                        + "from saga_tcc_branch b where b.status = ? "
-                        + "and (select tx.status from saga_tcc_transaction tx where tx.saga_id = b.saga_id) = ? "
+                        + "from " + branchTable + " b where b.status = ? "
+                        + "and (select tx.status from " + transactionTable
+                        + " tx where tx.saga_id = b.saga_id) = ? "
                         + "and b.next_retry_time <= current_timestamp(3) "
-                        + "and not exists (select 1 from saga_tcc_outbox o where o.branch_id = b.id "
+                        + "and not exists (select 1 from " + outboxTable + " o where o.branch_id = b.id "
                         + "and o.attempts < ? and o.status in ('NEW','FAILED','SENDING') "
                         + "and o.action = ? and o.command_attempt = b." + attemptColumn + ") "
                         + "order by b.next_retry_time, b.id limit ?",
@@ -462,7 +483,7 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
 
     @Override
     public void scheduleBranchRetry(long branchId, int attempts) {
-        jdbcTemplate.update("update saga_tcc_branch set next_retry_time = "
+        jdbcTemplate.update("update " + branchTable + " set next_retry_time = "
                         + "timestampadd(microsecond, ?, current_timestamp(3)), update_time = current_timestamp(3) "
                         + "where id = ?",
                 delayMicros(retryDelayMillis(attempts)), branchId);
@@ -586,14 +607,16 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     }
 
     private void discardObsoleteOutbox(long branchId, SagaTccAction action, int commandAttempt) {
-        jdbcTemplate.update("update saga_tcc_outbox set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
+        jdbcTemplate.update("update " + outboxTable
+                        + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
                         + "where branch_id = ? and status in ('NEW','FAILED','SENDING') "
                         + "and (action is null or action <> ? or command_attempt <> ?)",
                 branchId, action.name(), commandAttempt);
     }
 
     private void discardActiveOutbox(long branchId) {
-        jdbcTemplate.update("update saga_tcc_outbox set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
+        jdbcTemplate.update("update " + outboxTable
+                        + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
                         + "where branch_id = ? and status in ('NEW','FAILED','SENDING')",
                 branchId);
     }

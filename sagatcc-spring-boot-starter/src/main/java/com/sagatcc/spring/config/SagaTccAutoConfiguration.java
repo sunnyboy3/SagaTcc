@@ -69,8 +69,9 @@ public class SagaTccAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(ParticipantLogRepository.class)
-    public ParticipantLogRepository participantLogRepository(JdbcTemplate jdbcTemplate) {
-        return new JdbcParticipantLogRepository(jdbcTemplate);
+    public ParticipantLogRepository participantLogRepository(JdbcTemplate jdbcTemplate,
+                                                              SagaTccProperties properties) {
+        return new JdbcParticipantLogRepository(jdbcTemplate, properties);
     }
 
     @Bean

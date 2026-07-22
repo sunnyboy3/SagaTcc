@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.sagatcc.core.api.SagaTccNonRetryableException;
 import com.sagatcc.core.message.SagaTccAction;
 import com.sagatcc.core.message.SagaTccCommandMessage;
+import com.sagatcc.spring.config.SagaTccProperties;
 
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,15 +43,19 @@ class JdbcParticipantLogRepositoryIntegrationTest {
         dataSource.setUser("sa");
         dataSource.setPassword("");
         jdbc = new JdbcTemplate(dataSource);
-        jdbc.execute("create table saga_tcc_participant_log ("
+        createParticipantLogTable("");
+        repository = new JdbcParticipantLogRepository(jdbc);
+        transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    }
+
+    private void createParticipantLogTable(String prefix) {
+        jdbc.execute("create table " + prefix + "saga_tcc_participant_log ("
                 + "id bigint auto_increment primary key, local_app varchar(128) not null, "
                 + "coordinator_app varchar(128) not null, saga_id varchar(64) not null, "
                 + "branch_id bigint not null, target_app varchar(128) not null, bus_code varchar(128) not null, "
                 + "request_hash varchar(64) not null, try_status varchar(32), confirm_status varchar(32), "
                 + "cancel_status varchar(32), create_time timestamp(3) not null, update_time timestamp(3) not null, "
                 + "unique (local_app, coordinator_app, saga_id, branch_id))");
-        repository = new JdbcParticipantLogRepository(jdbc);
-        transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
 
     @Test
@@ -214,6 +219,35 @@ class JdbcParticipantLogRepositoryIntegrationTest {
 
         assertThat(businessCalls.get()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from saga_tcc_participant_log", Integer.class)).isZero();
+    }
+
+    @Test
+    void configuredSchemaRoutesParticipantLogThroughTheBusinessTransaction() {
+        jdbc.execute("create schema `saga_store`");
+        createParticipantLogTable("`saga_store`.");
+        SagaTccProperties properties = new SagaTccProperties();
+        properties.setSchema("saga_store");
+        properties.afterPropertiesSet();
+        JdbcParticipantLogRepository schemaRepository = new JdbcParticipantLogRepository(jdbc, properties);
+        SagaTccCommandMessage command = command("schema-saga", 11L, SagaTccAction.TRY, "coordinator");
+
+        transaction.execute(status -> {
+            try {
+                schemaRepository.executeIdempotently("student-service", command, () -> null);
+                return null;
+            } catch (RuntimeException failure) {
+                throw failure;
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        });
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from `saga_store`.saga_tcc_participant_log where try_status = 'SUCCEEDED'",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from saga_tcc_participant_log where saga_id = 'schema-saga'", Integer.class))
+                .isZero();
     }
 
     private Throwable executeCapturing(CountDownLatch start, SagaTccCommandMessage command,

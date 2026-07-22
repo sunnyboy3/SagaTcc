@@ -3,6 +3,8 @@ package com.sagatcc.spring.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.beans.factory.InitializingBean;
 
+import com.sagatcc.spring.store.SagaTccTableNames;
+
 @ConfigurationProperties(prefix = "sagatcc")
 public class SagaTccProperties implements InitializingBean {
 
@@ -10,6 +12,7 @@ public class SagaTccProperties implements InitializingBean {
 
     private String applicationName;
     private String transactionManagerBeanName = "transactionManager";
+    private String schema;
     private int maxAttempts = 16;
     private long retryBaseDelayMillis = 1000L;
     private long retryMaxDelayMillis = 60000L;
@@ -43,6 +46,14 @@ public class SagaTccProperties implements InitializingBean {
 
     public void setTransactionManagerBeanName(String transactionManagerBeanName) {
         this.transactionManagerBeanName = transactionManagerBeanName;
+    }
+
+    public String getSchema() {
+        return schema;
+    }
+
+    public void setSchema(String schema) {
+        this.schema = schema;
     }
 
     public void setMaxAttempts(int maxAttempts) {
@@ -151,6 +162,7 @@ public class SagaTccProperties implements InitializingBean {
 
     @Override
     public void afterPropertiesSet() {
+        schema = SagaTccTableNames.normalizeSchema(schema);
         requireText(transactionManagerBeanName, "transaction-manager-bean-name");
         requirePositive(maxAttempts, "max-attempts");
         requirePositive(retryBaseDelayMillis, "retry-base-delay-millis");

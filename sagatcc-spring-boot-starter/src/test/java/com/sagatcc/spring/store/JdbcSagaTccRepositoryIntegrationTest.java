@@ -19,10 +19,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.sql.DataSource;
 
+import com.sagatcc.core.context.SagaTccContext;
 import com.sagatcc.core.message.SagaTccAction;
 import com.sagatcc.core.model.SagaTccBranchRecord;
 import com.sagatcc.core.model.SagaTccBranchStatus;
 import com.sagatcc.core.model.SagaTccOutboxRecord;
+import com.sagatcc.core.model.SagaTccTransactionStatus;
 import com.sagatcc.spring.config.SagaTccProperties;
 
 import org.h2.jdbcx.JdbcDataSource;
@@ -376,14 +378,53 @@ class JdbcSagaTccRepositoryIntegrationTest {
                 "select count(*) from saga_tcc_outbox where status = 'NEW'", Integer.class)).isEqualTo(2);
     }
 
+    @Test
+    void configuredSchemaRoutesCoordinatorAndOutboxTablesThroughTheSameDataSource() {
+        jdbc.execute("create schema `saga_store`");
+        createSchema("`saga_store`.");
+        SagaTccProperties schemaProperties = new SagaTccProperties();
+        schemaProperties.setSchema("saga_store");
+        schemaProperties.setRetryJitterPercent(0);
+        schemaProperties.afterPropertiesSet();
+        JdbcSagaTccRepository schemaRepository = new JdbcSagaTccRepository(jdbc, schemaProperties);
+
+        SagaTccContext context = new SagaTccContext("schema-saga", "coordinator", "enroll", "business-1");
+        schemaRepository.insertTransaction(context, 1);
+        long branchId = schemaRepository.insertBranch("schema-saga", 1, "student-service", "enroll",
+                "example.EnrollRequest", "{}");
+        schemaRepository.enqueueOutbox("schema-message", "schema-saga", branchId,
+                "command-topic", "command-tag", SagaTccAction.TRY, 1, "{}");
+        schemaRepository.markActionDispatched(branchId, SagaTccBranchStatus.TRYING, 1);
+        schemaRepository.updateTransactionStatus("schema-saga", SagaTccTransactionStatus.TRYING);
+
+        List<SagaTccOutboxRecord> claimed = schemaRepository.claimReadyOutbox(1);
+        assertThat(claimed).hasSize(1);
+        schemaRepository.markOutboxSent(claimed.get(0));
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from `saga_store`.saga_tcc_transaction", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from `saga_store`.saga_tcc_branch", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from `saga_store`.saga_tcc_outbox where status = 'SENT'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from saga_tcc_transaction where saga_id = 'schema-saga'", Integer.class))
+                .isZero();
+    }
+
     private void createSchema() {
-        jdbc.execute("create table saga_tcc_transaction ("
+        createSchema("");
+    }
+
+    private void createSchema(String prefix) {
+        jdbc.execute("create table " + prefix + "saga_tcc_transaction ("
                 + "saga_id varchar(64) not null primary key, "
                 + "coordinator_app varchar(128) not null, business_code varchar(128) not null, "
                 + "business_id varchar(128) not null, status varchar(32) not null, branch_count int not null, "
                 + "last_error varchar(2000), next_retry_time timestamp(3) not null, "
                 + "create_time timestamp(3) not null, update_time timestamp(3) not null)");
-        jdbc.execute("create table saga_tcc_branch ("
+        jdbc.execute("create table " + prefix + "saga_tcc_branch ("
                 + "id bigint auto_increment primary key, saga_id varchar(64) not null, branch_no int not null, "
                 + "target_app varchar(128) not null, bus_code varchar(128) not null, "
                 + "request_class varchar(512) not null, request_json longtext not null, status varchar(32) not null, "
@@ -393,7 +434,7 @@ class JdbcSagaTccRepositoryIntegrationTest {
                 + "create_time timestamp(3) not null, update_time timestamp(3) not null, "
                 + "unique (saga_id, branch_no), "
                 + "index idx_saga_tcc_branch_status_retry (status, next_retry_time, id))");
-        jdbc.execute("create table saga_tcc_outbox ("
+        jdbc.execute("create table " + prefix + "saga_tcc_outbox ("
                 + "id bigint auto_increment primary key, message_key varchar(160) not null unique, "
                 + "saga_id varchar(64) not null, branch_id bigint not null, topic varchar(255) not null, "
                 + "tag varchar(64) not null, action varchar(32) not null, command_attempt int not null, "

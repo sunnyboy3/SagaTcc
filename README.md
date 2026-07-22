@@ -39,6 +39,18 @@ source sql/mysql.sql;
 
 协调方需要事务表、分支表和 outbox 表；参与方需要 participant log 表。为了部署简单，SQL 默认放在同一个库里。
 
+如果希望业务表与 SagaTcc 表使用同一 MySQL 实例下的不同 Schema，可以先在目标 Schema
+执行 `sql/mysql.sql`，然后配置 `sagatcc.schema`。starter 会继续使用业务 `DataSource`
+和同一个本地事务，只把 SagaTcc SQL 路由到限定的 Schema：
+
+```yaml
+sagatcc:
+  schema: saga_store
+```
+
+Schema 名只允许字母、数字和下划线，最长 64 个字符。业务数据库账号必须同时拥有业务
+Schema 和 SagaTcc Schema 的访问权限；不要为 SagaTcc Schema 创建第二个 `DataSource`。
+
 ### 2. 引入依赖
 
 ```xml
@@ -67,6 +79,7 @@ rocketmq:
 
 sagatcc:
   application-name: ${spring.application.name}
+  # schema: saga_store
   transaction-manager-bean-name: transactionManager
   max-attempts: 16
   retry-base-delay-millis: 1000

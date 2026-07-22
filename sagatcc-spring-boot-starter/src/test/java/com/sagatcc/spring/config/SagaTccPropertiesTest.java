@@ -21,6 +21,7 @@ class SagaTccPropertiesTest {
         assertAll(
                 () -> assertDoesNotThrow(properties::afterPropertiesSet),
                 () -> assertEquals("transactionManager", properties.getTransactionManagerBeanName()),
+                () -> assertEquals(null, properties.getSchema()),
                 () -> assertEquals(16, properties.getMaxAttempts()),
                 () -> assertEquals(1000L, properties.getRetryBaseDelayMillis()),
                 () -> assertEquals(60000L, properties.getRetryMaxDelayMillis()),
@@ -142,6 +143,31 @@ class SagaTccPropertiesTest {
     @Test
     void transactionManagerNameMustNotBeBlank() {
         rejects("transaction-manager-bean-name", p -> p.setTransactionManagerBeanName(" \t"));
+    }
+
+    @Test
+    void schemaAcceptsSafeMySqlIdentifierAndNormalizesWhitespace() {
+        SagaTccProperties properties = new SagaTccProperties();
+        properties.setSchema("  saga_store_01  ");
+
+        properties.afterPropertiesSet();
+
+        assertEquals("saga_store_01", properties.getSchema());
+        accepts(p -> p.setSchema("123_saga"));
+    }
+
+    @Test
+    void schemaTreatsBlankAsDefaultAndRejectsUnsafeIdentifiers() {
+        SagaTccProperties blank = new SagaTccProperties();
+        blank.setSchema(" \t");
+        blank.afterPropertiesSet();
+        assertEquals(null, blank.getSchema());
+
+        assertAll(
+                () -> rejects("sagatcc.schema", p -> p.setSchema("saga-store")),
+                () -> rejects("sagatcc.schema", p -> p.setSchema("saga.store")),
+                () -> rejects("sagatcc.schema", p -> p.setSchema("saga`store")),
+                () -> rejects("sagatcc.schema", p -> p.setSchema(text(65))));
     }
 
     @Test

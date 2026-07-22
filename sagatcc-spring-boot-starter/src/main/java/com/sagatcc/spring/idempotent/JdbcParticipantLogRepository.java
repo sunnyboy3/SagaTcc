@@ -10,7 +10,9 @@ import com.sagatcc.core.api.SagaTccException;
 import com.sagatcc.core.api.SagaTccNonRetryableException;
 import com.sagatcc.core.message.SagaTccAction;
 import com.sagatcc.core.message.SagaTccCommandMessage;
+import com.sagatcc.spring.config.SagaTccProperties;
 import com.sagatcc.spring.store.SagaTccDataSourceProvider;
+import com.sagatcc.spring.store.SagaTccTableNames;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -20,9 +22,15 @@ public class JdbcParticipantLogRepository implements ParticipantLogRepository, S
     private static final String RUNNING = "RUNNING";
 
     private final JdbcTemplate jdbcTemplate;
+    private final String participantLogTable;
 
     public JdbcParticipantLogRepository(JdbcTemplate jdbcTemplate) {
+        this(jdbcTemplate, new SagaTccProperties());
+    }
+
+    public JdbcParticipantLogRepository(JdbcTemplate jdbcTemplate, SagaTccProperties properties) {
         this.jdbcTemplate = jdbcTemplate;
+        this.participantLogTable = new SagaTccTableNames(properties.getSchema()).participantLog();
     }
 
     @Override
@@ -33,14 +41,14 @@ public class JdbcParticipantLogRepository implements ParticipantLogRepository, S
     @Override
     public void executeIdempotently(String localApp, SagaTccCommandMessage command, Callable<Void> businessCall) throws Exception {
         String requestHash = requestHash(command);
-        jdbcTemplate.update("insert into saga_tcc_participant_log " +
+        jdbcTemplate.update("insert into " + participantLogTable + " " +
                         "(local_app, coordinator_app, saga_id, branch_id, target_app, bus_code, request_hash, create_time, update_time) " +
                         "values (?, ?, ?, ?, ?, ?, ?, current_timestamp(3), current_timestamp(3)) " +
                         "on duplicate key update id = id",
                 localApp, command.getCoordinatorApp(), command.getSagaId(), command.getBranchId(),
                 command.getTargetApp(), command.getBusCode(), requestHash);
 
-        Map<String, Object> row = jdbcTemplate.queryForMap("select * from saga_tcc_participant_log " +
+        Map<String, Object> row = jdbcTemplate.queryForMap("select * from " + participantLogTable + " " +
                         "where local_app = ? and coordinator_app = ? and saga_id = ? and branch_id = ? for update",
                 localApp, command.getCoordinatorApp(), command.getSagaId(), command.getBranchId());
 
@@ -77,7 +85,8 @@ public class JdbcParticipantLogRepository implements ParticipantLogRepository, S
     }
 
     private void updateStatus(String localApp, SagaTccCommandMessage command, String column, String status) {
-        jdbcTemplate.update("update saga_tcc_participant_log set " + column + " = ?, update_time = current_timestamp(3) " +
+        jdbcTemplate.update("update " + participantLogTable + " set " + column
+                        + " = ?, update_time = current_timestamp(3) " +
                         "where local_app = ? and coordinator_app = ? and saga_id = ? and branch_id = ?",
                 status, localApp, command.getCoordinatorApp(), command.getSagaId(), command.getBranchId());
     }
@@ -108,7 +117,8 @@ public class JdbcParticipantLogRepository implements ParticipantLogRepository, S
         String json = command.getRequestJson() == null ? "" : command.getRequestJson();
         String legacyHash = Integer.toHexString(json.hashCode());
         if (equalsValue(row.get("request_hash"), legacyHash)) {
-            jdbcTemplate.update("update saga_tcc_participant_log set request_hash = ?, update_time = current_timestamp(3) "
+            jdbcTemplate.update("update " + participantLogTable
+                            + " set request_hash = ?, update_time = current_timestamp(3) "
                             + "where local_app = ? and coordinator_app = ? and saga_id = ? and branch_id = ?",
                     requestHash, localApp, command.getCoordinatorApp(), command.getSagaId(), command.getBranchId());
             return;
