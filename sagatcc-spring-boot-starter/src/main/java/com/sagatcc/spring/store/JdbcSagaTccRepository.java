@@ -662,18 +662,31 @@ public class JdbcSagaTccRepository implements SagaTccRepository, SagaTccDataSour
     }
 
     private void discardObsoleteOutbox(long branchId, SagaTccAction action, int commandAttempt) {
-        jdbcTemplate.update("update " + outboxTable
-                        + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
-                        + "where branch_id = ? and status in ('NEW','FAILED','SENDING') "
-                        + "and (action is null or action <> ? or command_attempt <> ?)",
-                branchId, action.name(), commandAttempt);
+        List<Long> outboxIds = jdbcTemplate.queryForList("select id from " + outboxTable
+                        + " where branch_id = ? and status in ('NEW','FAILED','SENDING') "
+                        + "and (action is null or action <> ? or command_attempt <> ?) order by id",
+                Long.class, branchId, action.name(), commandAttempt);
+        for (Long outboxId : outboxIds) {
+            // 使用主键等值更新，避免按就绪状态索引扫描时持有范围锁并阻塞其他分支插入消息。
+            jdbcTemplate.update("update " + outboxTable
+                            + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
+                            + "where id = ? and status in ('NEW','FAILED','SENDING') "
+                            + "and (action is null or action <> ? or command_attempt <> ?)",
+                    outboxId, action.name(), commandAttempt);
+        }
     }
 
     private void discardActiveOutbox(long branchId) {
-        jdbcTemplate.update("update " + outboxTable
-                        + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
-                        + "where branch_id = ? and status in ('NEW','FAILED','SENDING')",
-                branchId);
+        List<Long> outboxIds = jdbcTemplate.queryForList("select id from " + outboxTable
+                        + " where branch_id = ? and status in ('NEW','FAILED','SENDING') order by id",
+                Long.class, branchId);
+        for (Long outboxId : outboxIds) {
+            // 所有清理线程都按主键升序逐条加锁，与 Outbox 抢占路径保持一致的锁顺序。
+            jdbcTemplate.update("update " + outboxTable
+                            + " set status = 'DISCARDED', claim_token = null, update_time = current_timestamp(3) "
+                            + "where id = ? and status in ('NEW','FAILED','SENDING')",
+                    outboxId);
+        }
     }
 
     private String trimError(String error) {
