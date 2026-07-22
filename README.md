@@ -272,3 +272,11 @@ source sql/mysql-upgrade-add-outbox-claim.sql;
 ```bash
 mvn clean test
 ```
+## MQ发送消息实例
+```sql
+sagatcc-command-order-service
+{"messageKey":"d1cd203b9c1440d0a8aa1baf2d0e9f43-2-TRY-5","sagaId":"d1cd203b9c1440d0a8aa1baf2d0e9f43","branchId":2,"coordinatorApp":"order-service","targetApp":"order-service","busCode":"orderFinalize","action":"TRY","requestClass":"com.sagatcc.demo.order.OrderFinalizeRequest","requestJson":"{\"orderId\":1}","attempt":5}
+
+sagatcc-command-wallet-service
+{"messageKey":"d1cd203b9c1440d0a8aa1baf2d0e9f43-1-TRY-4","sagaId":"d1cd203b9c1440d0a8aa1baf2d0e9f43","branchId":1,"coordinatorApp":"order-service","targetApp":"wallet-service","busCode":"walletPay","action":"TRY","requestClass":"com.sagatcc.demo.wallet.api.WalletPayRequest","requestJson":"{\"userId\":1,\"amount\":100}","attempt":4}
+```
