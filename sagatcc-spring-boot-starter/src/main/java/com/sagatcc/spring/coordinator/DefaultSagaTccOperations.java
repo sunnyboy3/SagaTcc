@@ -44,6 +44,11 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
         return begin(businessCode, businessId, UUID.randomUUID().toString().replace("-", ""));
     }
 
+    /**
+     * 返回normalizedSagaId时 Saga 还只是内存上下文，数据库记录通常尚未产生。只有本地事务进入 beforeCommit() 后，Saga、分支和 Outbox 才会持久化。
+     * 这里很好理解：beforeCommit  这是回调方法不是同步方法
+     *begin() 负责建立 Saga 与当前本地事务的绑定；enlist() 负责登记分支；本地事务提交前统一把业务数据、Saga 状态和 Outbox 原子地写入数据库。
+     */
     @Override
     public String begin(String businessCode, String businessId, String sagaId) {
         if (SagaTccContextHolder.get() != null) {
@@ -66,6 +71,7 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
                     context.setPersisted(true);
                 }
 
+                // 挂起外层事务， 用于支持REQUIRES_NEW
                 @Override
                 public void suspend() {
                     if (SagaTccContextHolder.get() == context) {
@@ -74,6 +80,7 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
                     }
                 }
 
+                // 恢复外层事务
                 @Override
                 public void resume() {
                     if (suspended) {
@@ -85,6 +92,7 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
                     }
                 }
 
+                // 清理ThreadLocal
                 @Override
                 public void afterCompletion(int status) {
                     if (SagaTccContextHolder.get() == context) {
@@ -93,6 +101,7 @@ public class DefaultSagaTccOperations implements SagaTccOperations {
                 }
             });
         } catch (RuntimeException e) {
+            // 清理ThreadLocal
             SagaTccContextHolder.clear();
             throw e;
         }
